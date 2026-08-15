@@ -25,4 +25,4 @@ pub const FORMAT_VERSION: u32 = 1;
 pub const CEDAR_VERSION: &str = "4.12.0";
 
 /// The exact Treetop core version used to prepare policy engines.
-pub const TREETOP_CORE_VERSION: &str = "0.0.19";
+pub const TREETOP_CORE_VERSION: &str = "0.0.21";
