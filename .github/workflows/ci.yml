@@ -43,10 +43,12 @@ jobs:
           tool: cargo-audit@0.22.2
       - name: Audit dependencies
         run: cargo audit --deny warnings
-      - name: Check dependency and license policy
-        uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
         with:
-          command: check advisories bans licenses sources
+          tool: cargo-deny@0.20.2
+      - name: Check dependency and license policy
+        run: cargo deny --locked check advisories bans licenses sources
       - name: Verify published package contents
         run: cargo package --locked -p treetop-bundle
       - name: Smoke-test release CLI
