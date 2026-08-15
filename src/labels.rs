@@ -15,11 +15,21 @@ struct RawLabelPattern {
 }
 
 /// A validated regular-expression label mapping.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LabelPattern {
     name: String,
     regex: String,
+    #[serde(skip)]
+    compiled: Regex,
 }
+
+impl PartialEq for LabelPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.regex == other.regex
+    }
+}
+
+impl Eq for LabelPattern {}
 
 impl LabelPattern {
     pub fn name(&self) -> &str {
@@ -177,21 +187,31 @@ impl LabelSet {
                         ),
                     ));
                 }
-                if raw_pattern.regex.is_empty() {
+                let compiled = if raw_pattern.regex.is_empty() {
                     diagnostics.push(Diagnostic::error(
                         "labels.empty_regex",
                         format!("{pattern_location}.regex must not be empty"),
                     ));
-                } else if let Err(error) = Regex::new(&raw_pattern.regex) {
-                    diagnostics.push(Diagnostic::error(
-                        "labels.invalid_regex",
-                        format!("{pattern_location}.regex is invalid: {error}"),
-                    ));
+                    None
+                } else {
+                    match Regex::new(&raw_pattern.regex) {
+                        Ok(regex) => Some(regex),
+                        Err(error) => {
+                            diagnostics.push(Diagnostic::error(
+                                "labels.invalid_regex",
+                                format!("{pattern_location}.regex is invalid: {error}"),
+                            ));
+                            None
+                        }
+                    }
+                };
+                if let Some(compiled) = compiled {
+                    patterns.push(LabelPattern {
+                        name: raw_pattern.name,
+                        regex: raw_pattern.regex,
+                        compiled,
+                    });
                 }
-                patterns.push(LabelPattern {
-                    name: raw_pattern.name,
-                    regex: raw_pattern.regex,
-                });
             }
 
             rules.push(LabelRule {
@@ -210,24 +230,25 @@ impl LabelSet {
     }
 
     pub(crate) fn combine(sets: impl IntoIterator<Item = Self>) -> Result<Self> {
-        let raw = sets
-            .into_iter()
-            .flat_map(|set| set.0)
-            .map(|rule| RawLabelRule {
-                kind: rule.kind,
-                field: rule.field,
-                output: rule.output,
-                patterns: rule
-                    .patterns
-                    .into_iter()
-                    .map(|pattern| RawLabelPattern {
-                        name: pattern.name,
-                        regex: pattern.regex,
-                    })
-                    .collect(),
-            })
-            .collect();
-        Self::from_raw(raw)
+        let rules = sets.into_iter().flat_map(|set| set.0).collect::<Vec<_>>();
+        let mut destinations = HashSet::with_capacity(rules.len());
+        let mut diagnostics = Vec::new();
+        for rule in &rules {
+            if !destinations.insert((&rule.kind, &rule.output)) {
+                diagnostics.push(Diagnostic::error(
+                    "labels.duplicate_destination",
+                    format!(
+                        "duplicate label destination ({}, {})",
+                        rule.kind, rule.output
+                    ),
+                ));
+            }
+        }
+        if diagnostics.is_empty() {
+            Ok(Self(rules))
+        } else {
+            Err(BundleError::Validation(diagnostics))
+        }
     }
 
     pub fn rules(&self) -> &[LabelRule] {
@@ -246,13 +267,7 @@ impl LabelSet {
                 let patterns = rule
                     .patterns
                     .iter()
-                    .map(|pattern| {
-                        (
-                            pattern.name.clone(),
-                            Regex::new(&pattern.regex)
-                                .expect("LabelSet invariant: regular expressions are compiled"),
-                        )
-                    })
+                    .map(|pattern| (pattern.name.clone(), pattern.compiled.clone()))
                     .collect();
                 Arc::new(RegexLabeler::new(
                     rule.kind.clone(),
