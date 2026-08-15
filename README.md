@@ -83,3 +83,19 @@ unpublished and is distributed as x86-64 and ARM64 Linux musl archives on the
 matching GitHub release, together with `SHA256SUMS`. Release tags must exactly
 match the library version; the release workflow publishes the library before
 building and attaching the CLI archives.
+
+## Performance regression checks
+
+Pull requests run deterministic Gungraun instruction-count benchmarks through
+the organization's reusable Rust benchmark workflow. Each hot path is a small,
+separate Cargo benchmark target so compilation is shared while execution fans
+out across jobs. The current probes independently measure strict label parsing
+and conversion of validated labels into runtime labelers.
+
+Run either probe locally with the matching runner:
+
+```sh
+cargo install gungraun-runner --version 0.19.4 --locked
+cargo bench --bench labels_parse_callgrind
+cargo bench --bench labels_to_labelers_callgrind
+```

@@ -2,7 +2,7 @@
 all-features = true
 
 [advisories]
-db-path = "target/advisory-dbs"
+db-path = ".cargo-deny/advisory-dbs"
 ignore = []
 
 [licenses]
