@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: "-D warnings"
+
+jobs:
+  quality:
+    name: Format, lint, test, audit, and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          components: clippy, rustfmt
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Run tests and doctests
+        run: cargo test --locked --workspace --all-features
+      - name: Build documentation
+        run: cargo doc --locked --workspace --all-features --no-deps
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2@0.23.2 --config .markdownlint.json "**/*.md" "!target"
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Audit dependencies
+        run: cargo audit --deny warnings
+      - name: Check dependency and license policy
+        uses: EmbarkStudios/cargo-deny-action@b66acf5e9fe20f8aba065be86778a8a4c846f902 # v2
+        with:
+          command: check advisories bans licenses sources
+      - name: Verify published package contents
+        run: cargo package --locked -p treetop-bundle
+      - name: Smoke-test release CLI
+        run: |
+          cargo build --locked --release -p treetop-bundle-cli
+          target/release/treetop-bundle --version
+
+  msrv:
+    name: Rust 1.93.1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust 1.93.1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: 1.93.1
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Check MSRV
+        run: cargo check --locked --workspace --all-features

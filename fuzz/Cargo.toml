@@ -1,0 +1,42 @@
+[package]
+name = "treetop-bundle-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+tempfile = "3.21"
+treetop-bundle = { path = ".." }
+
+[[bin]]
+name = "archive"
+path = "fuzz_targets/archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signature"
+path = "fuzz_targets/signature.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "labels"
+path = "fuzz_targets/labels.rs"
+test = false
+doc = false
+bench = false
