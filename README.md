@@ -100,10 +100,12 @@ are intentionally outside version 1.
 ## Distribution
 
 The `treetop-bundle` library is published to crates.io. The CLI package remains
-unpublished and is distributed as x86-64 and ARM64 Linux musl archives on the
-matching GitHub release, together with `SHA256SUMS`. Release tags must exactly
-match the library version; the release workflow publishes the library before
-building and attaching the CLI archives.
+unpublished and is distributed as native x86-64 and ARM64 archives for Linux
+musl, ARM64 for macOS, and x86-64 for Windows on the matching GitHub release,
+together with `SHA256SUMS`. Every binary is built and smoke-tested on a native
+GitHub-hosted runner. Release tags must exactly match the library version; the
+release workflow publishes the library before building and attaching the CLI
+archives.
 
 ## Performance regression checks
 

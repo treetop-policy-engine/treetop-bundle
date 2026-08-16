@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Publish native CLI archives for Linux musl on x86-64 and ARM64, macOS on
+  ARM64, and Windows on x86-64, with per-platform smoke tests and a shared
+  checksum manifest.
 - Compile large label rules as bounded `RegexSet`s while retaining a bounded
   individual-regex fast path for small rules, enforce document-wide label
   resource budgets, and benchmark each compilation and matching scenario

@@ -9,6 +9,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
   RUSTDOCFLAGS: "-D warnings"
 
 jobs:
@@ -88,11 +90,25 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   binaries:
-    name: Publish CLI archives
+    name: Build ${{ matrix.target }} CLI
     needs: publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            archive: treetop-bundle-x86_64-linux-musl.tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            archive: treetop-bundle-aarch64-linux-musl.tar.gz
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            archive: treetop-bundle-aarch64-macos.tar.gz
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive: treetop-bundle-x86_64-windows.zip
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,26 +116,56 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
-      - name: Install cross
-        run: cargo install cross --version 0.2.5 --locked
-      - name: Build Linux musl binaries
+          targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: runner.os == 'Linux'
         run: |
-          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            CARGO_TARGET_DIR="target/cross-${target}" \
-              cross build --locked --release --target "$target" -p treetop-bundle-cli
-          done
-      - name: Package and smoke-test archives
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+      - name: Build CLI
+        run: cargo build --locked --release --target ${{ matrix.target }} -p treetop-bundle-cli
+      - name: Smoke-test and package Unix CLI
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
+          binary="target/${{ matrix.target }}/release/treetop-bundle"
+          "$binary" --version
           mkdir release-artifacts
-          target/cross-x86_64-unknown-linux-musl/x86_64-unknown-linux-musl/release/treetop-bundle \
-            --version
-          for architecture in x86_64 aarch64; do
-            target="${architecture}-unknown-linux-musl"
-            binary="target/cross-${target}/${target}/release/treetop-bundle"
-            archive="release-artifacts/treetop-bundle-${architecture}-linux-musl.tar.gz"
-            tar czf "$archive" -C "$(dirname "$binary")" treetop-bundle
-          done
-          sha256sum release-artifacts/*.tar.gz > release-artifacts/SHA256SUMS
+          tar czf "release-artifacts/${{ matrix.archive }}" \
+            -C "$(dirname "$binary")" treetop-bundle
+      - name: Smoke-test and package Windows CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = "target/${{ matrix.target }}/release/treetop-bundle.exe"
+          & $binary --version
+          New-Item -ItemType Directory -Path release-artifacts
+          Compress-Archive -LiteralPath $binary `
+            -DestinationPath "release-artifacts/${{ matrix.archive }}"
+      - name: Upload CLI archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: release-artifacts/${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Publish CLI archives
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download CLI archives
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: cli-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Create checksum manifest
+        working-directory: release-artifacts
+        run: sha256sum treetop-bundle-* > SHA256SUMS
       - name: Create GitHub release
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
