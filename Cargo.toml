@@ -43,6 +43,7 @@ tar = "0.4.44"
 thiserror = "2.0.16"
 toml = "0.9.5"
 treetop-core = "=0.0.21"
+zeroize = "1.9.0"
 
 [dev-dependencies]
 gungraun = "0.19.4"
@@ -53,11 +54,42 @@ name = "labels_parse_callgrind"
 harness = false
 
 [[bench]]
+name = "labels_parse_many_callgrind"
+harness = false
+
+[[bench]]
 name = "labels_to_labelers_callgrind"
 harness = false
 
 [[bench]]
-name = "signing_key_load_callgrind"
+name = "labels_to_labelers_many_callgrind"
+harness = false
+
+[[bench]]
+name = "labels_apply_many_callgrind"
+harness = false
+
+[[bench]]
+name = "archive_validate_callgrind"
+harness = false
+
+[[bench]]
+name = "archive_resign_callgrind"
+harness = false
+required-features = ["encrypted-keys"]
+
+[[bench]]
+name = "signing_key_load_unencrypted_callgrind"
+harness = false
+required-features = ["encrypted-keys"]
+
+[[bench]]
+name = "signing_key_detect_encrypted_callgrind"
+harness = false
+required-features = ["encrypted-keys"]
+
+[[bench]]
+name = "signing_key_load_encrypted_callgrind"
 harness = false
 required-features = ["encrypted-keys"]
 

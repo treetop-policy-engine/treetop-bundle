@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use treetop_bundle::{
@@ -10,6 +11,7 @@ use treetop_bundle::{
 use zeroize::Zeroizing;
 
 const SIGNING_KEY_PASSWORD_ENV: &str = "TREETOP_BUNDLE_SIGNING_KEY_PASSWORD";
+const MAX_SIGNING_KEY_PASSWORD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Compile, validate, and sign Treetop policy bundles")]
@@ -254,10 +256,7 @@ fn run_build(args: BuildArgs) -> Result<(), BundleError> {
         Ok(archive) => archive,
         Err(error) => return render_content_error(common, error),
     };
-    fs::write(&args.output, archive.as_bytes()).map_err(|error| BundleError::Io {
-        path: args.output.clone(),
-        source: error,
-    })?;
+    write_new_file(&args.output, archive.as_bytes())?;
     match args.format {
         OutputFormat::Human => println!("wrote {}", args.output.display()),
         OutputFormat::Json => println!(
@@ -277,10 +276,7 @@ fn run_sign(args: SignArgs) -> Result<(), BundleError> {
     let key = load_signing_key(&args.signing_key, args.signing_key_password_file.as_deref())?;
     let archive = BundleArchive::read(&args.archive, ArchiveLimits::DEFAULT_MAX_COMPRESSED_BYTES)?;
     let signed = archive.resign(&key, ArchiveLimits::default())?;
-    fs::write(&args.output, signed.as_bytes()).map_err(|error| BundleError::Io {
-        path: args.output.clone(),
-        source: error,
-    })?;
+    write_new_file(&args.output, signed.as_bytes())?;
     println!("wrote {}", args.output.display());
     Ok(())
 }
@@ -369,12 +365,23 @@ fn configured_signing_key_password(
     password_file: Option<&Path>,
 ) -> Result<Option<Zeroizing<Vec<u8>>>, BundleError> {
     if let Some(path) = password_file {
-        let mut password = fs::read(path)
-            .map(Zeroizing::new)
+        let file = File::open(path).map_err(|error| BundleError::Io {
+            path: path.to_path_buf(),
+            source: error,
+        })?;
+        let mut password = Zeroizing::new(Vec::new());
+        file.take((MAX_SIGNING_KEY_PASSWORD_BYTES as u64) + 1)
+            .read_to_end(&mut password)
             .map_err(|error| BundleError::Io {
                 path: path.to_path_buf(),
                 source: error,
             })?;
+        if password.len() > MAX_SIGNING_KEY_PASSWORD_BYTES {
+            return Err(BundleError::Key(format!(
+                "signing-key password file {} exceeds {MAX_SIGNING_KEY_PASSWORD_BYTES} bytes",
+                path.display()
+            )));
+        }
         trim_line_ending(&mut password);
         return Ok(Some(password));
     }
@@ -408,5 +415,49 @@ fn refuse_overwrite(path: &Path) -> Result<(), BundleError> {
         })
     } else {
         Ok(())
+    }
+}
+
+fn write_new_file(path: &Path, contents: &[u8]) -> Result<(), BundleError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| BundleError::Io {
+            path: path.to_path_buf(),
+            source: error,
+        })?;
+    file.write_all(contents).map_err(|error| BundleError::Io {
+        path: path.to_path_buf(),
+        source: error,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_new_file_never_overwrites_an_existing_path() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("bundle.tar.gz");
+        fs::write(&path, b"existing").unwrap();
+
+        let error = write_new_file(&path, b"replacement").unwrap_err();
+
+        assert!(matches!(error, BundleError::Io { .. }));
+        assert_eq!(fs::read(path).unwrap(), b"existing");
+    }
+
+    #[test]
+    fn password_files_have_a_bounded_size() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("password");
+        fs::write(&path, vec![b'x'; MAX_SIGNING_KEY_PASSWORD_BYTES + 1]).unwrap();
+
+        let error = configured_signing_key_password(Some(&path)).unwrap_err();
+
+        assert!(error.to_string().contains("password file"));
+        assert!(error.to_string().contains("exceeds"));
     }
 }

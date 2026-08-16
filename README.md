@@ -45,6 +45,13 @@ symlink escapes are rejected. Bundle output is a canonical gzip-compressed tar
 containing `manifest.json`, an optional `signature.json`, `policies.cedar`, an
 optional `schema.json`, and `labels.json` in that exact order.
 
+Label patterns in each rule are compiled into one `RegexSet`, so all patterns
+are evaluated in a single search. To keep untrusted label documents within a
+predictable resource budget, a document may contain at most 256 rules, 1,024
+patterns per rule, 4,096 patterns in total, 16 KiB per regex, and 1 MiB of
+regex source in total. Each compiled set also has explicit 2 MiB program and
+1 MiB lazy-DFA cache limits.
+
 ## Commands
 
 ```text
@@ -102,10 +109,13 @@ building and attaching the CLI archives.
 
 Pull requests run deterministic Gungraun instruction-count benchmarks through
 the organization's reusable Rust benchmark workflow. Each hot path is a small,
-separate Cargo benchmark target so compilation is shared while execution fans
-out across jobs. The current probes independently measure strict label parsing
-and conversion of validated labels into runtime labelers, plus unencrypted key
-loading, encrypted-key detection, and encrypted key loading.
+separate Cargo benchmark target containing exactly one measured scenario. This
+keeps target-level regression totals meaningful while compilation is shared and
+execution fans out across jobs. Shared fixture code lives in `benches/support/`
+and is not a benchmark target. The current probes independently measure strict
+label parsing, large `RegexSet` compilation, runtime labeler construction and
+matching, archive validation and re-signing, plus unencrypted key loading,
+encrypted-key detection, and encrypted key loading.
 
 The signing-key probe uses a deterministic PBKDF2-SHA256/AES-256-CBC fixture
 with 2,048 iterations. It is a regression fixture, not a recommendation to
@@ -117,6 +127,13 @@ Run any probe locally with the matching runner:
 ```sh
 cargo install gungraun-runner --version 0.19.4 --locked
 cargo bench --bench labels_parse_callgrind
+cargo bench --bench labels_parse_many_callgrind
 cargo bench --bench labels_to_labelers_callgrind
-cargo bench --bench signing_key_load_callgrind
+cargo bench --bench labels_to_labelers_many_callgrind
+cargo bench --bench labels_apply_many_callgrind
+cargo bench --bench archive_validate_callgrind
+cargo bench --bench archive_resign_callgrind
+cargo bench --bench signing_key_load_unencrypted_callgrind
+cargo bench --bench signing_key_detect_encrypted_callgrind
+cargo bench --bench signing_key_load_encrypted_callgrind
 ```

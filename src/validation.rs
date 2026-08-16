@@ -7,7 +7,9 @@ use cedar_policy::pst::{
     ActionConstraint as PstActionConstraint, Clause, EntityOrSlot, Expr, Literal,
     PrincipalConstraint as PstPrincipalConstraint, ResourceConstraint as PstResourceConstraint,
 };
-use cedar_policy::{Policy, PolicySet, Schema, SchemaFragment, ValidationMode, Validator};
+use cedar_policy::{
+    Policy, PolicyId, PolicySet, Schema, SchemaFragment, ValidationMode, Validator,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -133,6 +135,9 @@ pub(crate) fn compile_manifest(manifest: &BundleManifest) -> Result<BundleParts>
     let mut diagnostics = Vec::new();
     let mut policy_text = String::new();
     let mut policy_ids = BTreeSet::new();
+    let mut aggregate_policy_set = PolicySet::new();
+    let mut aggregate_policy_index = 0usize;
+    let mut aggregate_policy_set_valid = true;
     let mut modules = Vec::with_capacity(manifest.modules().len());
     let mut schema_json = Value::Object(Map::new());
     let mut has_schema = false;
@@ -171,6 +176,19 @@ pub(crate) fn compile_manifest(manifest: &BundleManifest) -> Result<BundleParts>
                 &mut policy_ids,
                 &mut diagnostics,
             );
+            for policy in parsed.policies().filter(|policy| policy.is_static()) {
+                let policy = policy.new_id(PolicyId::new(format!(
+                    "treetop-bundle-{aggregate_policy_index}"
+                )));
+                aggregate_policy_index += 1;
+                if let Err(error) = aggregate_policy_set.add(policy) {
+                    diagnostics.push(Diagnostic::error(
+                        "policy.aggregate_build",
+                        error.to_string(),
+                    ));
+                    aggregate_policy_set_valid = false;
+                }
+            }
             policy_text.push_str("// treetop-module: ");
             policy_text.push_str(&single_line(module.name()));
             policy_text.push_str("; path: ");
@@ -259,16 +277,7 @@ pub(crate) fn compile_manifest(manifest: &BundleManifest) -> Result<BundleParts>
         Err(error) => return Err(error),
     };
 
-    let aggregate_policy_set = match policy_text.parse::<PolicySet>() {
-        Ok(policy_set) => Some(policy_set),
-        Err(error) => {
-            diagnostics.push(Diagnostic::error(
-                "policy.aggregate_syntax",
-                error.to_string(),
-            ));
-            None
-        }
-    };
+    let aggregate_policy_set = aggregate_policy_set_valid.then_some(aggregate_policy_set);
 
     let schema_json = if has_schema {
         match Schema::from_json_value(schema_json.clone()) {

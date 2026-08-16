@@ -12,6 +12,9 @@ fn build_runtime_labelers(labels: LabelSet) {
     let _ = labels.to_labelers();
 }
 
-library_benchmark_group!(name = labels_to_labelers; benchmarks = build_runtime_labelers);
+library_benchmark_group!(
+    name = labels_to_labelers;
+    benchmarks = build_runtime_labelers
+);
 
 main!(library_benchmark_groups = labels_to_labelers);

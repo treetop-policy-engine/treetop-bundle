@@ -382,23 +382,30 @@ fn validate_input_path(directory: &Path, input: &str, diagnostics: &mut Vec<Diag
 }
 
 fn validate_module_set(modules: &[ModuleSelection], diagnostics: &mut Vec<Diagnostic>) {
-    for (index, module) in modules.iter().enumerate() {
-        for other in modules.iter().skip(index + 1) {
-            if module.manifest.name == other.manifest.name {
-                diagnostics.push(Diagnostic::error(
-                    "manifest.duplicate_module_name",
-                    format!("duplicate module name {:?}", module.manifest.name),
-                ));
-            }
-            if namespaces_overlap(&module.manifest.namespace, &other.manifest.namespace) {
-                diagnostics.push(Diagnostic::error(
-                    "manifest.overlapping_namespaces",
-                    format!(
-                        "module namespace roots {:?} and {:?} overlap",
-                        module.manifest.namespace, other.manifest.namespace
-                    ),
-                ));
-            }
+    let mut names = HashSet::with_capacity(modules.len());
+    for module in modules {
+        if !names.insert(module.manifest.name.as_str()) {
+            diagnostics.push(Diagnostic::error(
+                "manifest.duplicate_module_name",
+                format!("duplicate module name {:?}", module.manifest.name),
+            ));
+        }
+    }
+
+    let mut ordered_namespaces = modules
+        .iter()
+        .map(|module| module.manifest.namespace.as_str())
+        .collect::<Vec<_>>();
+    ordered_namespaces.sort_unstable();
+    for pair in ordered_namespaces.windows(2) {
+        if namespaces_overlap(pair[0], pair[1]) {
+            diagnostics.push(Diagnostic::error(
+                "manifest.overlapping_namespaces",
+                format!(
+                    "module namespace roots {:?} and {:?} overlap",
+                    pair[0], pair[1]
+                ),
+            ));
         }
     }
 
