@@ -5,6 +5,11 @@
 - Accept password-encrypted PKCS#8 Ed25519 signing keys, with passwords read
   from a file, `TREETOP_BUNDLE_SIGNING_KEY_PASSWORD`, or a hidden terminal
   prompt.
+- Decode each signing-key PEM document once and cover the key-loading paths
+  with deterministic instruction-count regression benchmarks.
+- Keep encrypted-key support enabled by default while allowing library-only
+  users to omit its AES, PBKDF2, and scrypt dependencies with
+  `default-features = false`.
 
 ## [0.0.3] - 2026-08-15
 

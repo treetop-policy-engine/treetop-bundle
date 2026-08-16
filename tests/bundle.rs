@@ -2,6 +2,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::pkcs8::{EncodePrivateKey, EncodePublicKey};
 use flate2::bufread::GzDecoder;
 use flate2::{Compression, GzBuilder};
+#[cfg(feature = "encrypted-keys")]
 use pkcs8::{LineEnding, PrivateKeyInfo};
 use std::fs;
 use std::io::{Cursor, Read, Write};
@@ -528,6 +529,7 @@ fn private_key_file_permissions_are_enforced() {
 }
 
 #[test]
+#[cfg(feature = "encrypted-keys")]
 fn encrypted_private_keys_require_and_accept_the_correct_password() {
     let dalek = ed25519_dalek::SigningKey::from_bytes(&[10; 32]);
     let encrypted = encrypted_pem(&dalek, b"correct horse", 1);
@@ -539,6 +541,19 @@ fn encrypted_private_keys_require_and_accept_the_correct_password() {
     let loaded = SigningKey::from_pkcs8_pem_with_password(&encrypted, b"correct horse").unwrap();
     assert_eq!(loaded.key_id(), key_id_for(&dalek));
 
+    let unencrypted = pem("PRIVATE KEY", dalek.to_pkcs8_der().unwrap().as_bytes());
+    let loaded =
+        SigningKey::from_pkcs8_pem_with_password(&unencrypted, b"unused password").unwrap();
+    assert_eq!(loaded.key_id(), key_id_for(&dalek));
+    let error = SigningKey::from_pkcs8_encrypted_pem(&unencrypted, b"unused password")
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("expected \"ENCRYPTED PRIVATE KEY\"")
+    );
+
     let error = SigningKey::from_pkcs8_encrypted_pem(&encrypted, b"wrong")
         .err()
         .unwrap();
@@ -546,6 +561,7 @@ fn encrypted_private_keys_require_and_accept_the_correct_password() {
 }
 
 #[test]
+#[cfg(feature = "encrypted-keys")]
 fn encrypted_private_keys_can_be_loaded_from_a_file() {
     let temporary = tempfile::tempdir().unwrap();
     let dalek = ed25519_dalek::SigningKey::from_bytes(&[11; 32]);
@@ -573,6 +589,7 @@ fn key_pair(seed: u8) -> (SigningKey, TrustedKey) {
     )
 }
 
+#[cfg(feature = "encrypted-keys")]
 fn key_id_for(key: &ed25519_dalek::SigningKey) -> String {
     let public_der = key.verifying_key().to_public_key_der().unwrap();
     let public_pem = pem("PUBLIC KEY", public_der.as_bytes());
@@ -582,6 +599,7 @@ fn key_id_for(key: &ed25519_dalek::SigningKey) -> String {
         .to_string()
 }
 
+#[cfg(feature = "encrypted-keys")]
 fn encrypted_pem(key: &ed25519_dalek::SigningKey, password: &[u8], seed: u8) -> String {
     let der = key.to_pkcs8_der().unwrap();
     let private_key = PrivateKeyInfo::try_from(der.as_bytes()).unwrap();

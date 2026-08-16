@@ -1,8 +1,7 @@
 use crate::{BundleError, FORMAT_VERSION, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ed25519_dalek::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use ed25519_dalek::pkcs8::{DecodePrivateKey, DecodePublicKey, SecretDocument};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
-use pkcs8::SecretDocument;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -101,18 +100,19 @@ impl SigningKey {
 
     /// Decode an unencrypted PKCS#8 PEM private key.
     pub fn from_pkcs8_pem(pem: &str) -> Result<Self> {
-        if is_encrypted_private_key(pem)? {
-            return Err(BundleError::SigningKeyPasswordRequired);
+        match parse_private_key_pem(pem)? {
+            PrivateKeyDocument::Unencrypted(document) => Self::from_pkcs8_document(&document),
+            PrivateKeyDocument::Encrypted(document) => {
+                drop(document);
+                Err(BundleError::SigningKeyPasswordRequired)
+            }
         }
-        ed25519_dalek::SigningKey::from_pkcs8_pem(pem)
-            .map(Self)
-            .map_err(|error| {
-                BundleError::Key(format!("invalid PKCS#8 Ed25519 private key: {error}"))
-            })
     }
 
     /// Load a password-encrypted private key and, on Unix, reject
-    /// group/other-accessible files.
+    /// group/other-accessible files. Requires the default `encrypted-keys`
+    /// feature.
+    #[cfg(feature = "encrypted-keys")]
     pub fn from_pkcs8_encrypted_pem_file(
         path: impl AsRef<Path>,
         password: impl AsRef<[u8]>,
@@ -123,7 +123,9 @@ impl SigningKey {
     }
 
     /// Load either an encrypted or unencrypted private key, using the password
-    /// when the PEM is encrypted.
+    /// when the PEM is encrypted. Requires the default `encrypted-keys`
+    /// feature.
+    #[cfg(feature = "encrypted-keys")]
     pub fn from_pkcs8_pem_file_with_password(
         path: impl AsRef<Path>,
         password: impl AsRef<[u8]>,
@@ -133,25 +135,54 @@ impl SigningKey {
         Self::from_pkcs8_pem_with_password(&pem, password)
     }
 
-    /// Decode a password-encrypted PKCS#8 PEM private key.
+    /// Decode a password-encrypted PKCS#8 PEM private key. Requires the
+    /// default `encrypted-keys` feature.
+    #[cfg(feature = "encrypted-keys")]
     pub fn from_pkcs8_encrypted_pem(pem: &str, password: impl AsRef<[u8]>) -> Result<Self> {
-        ed25519_dalek::SigningKey::from_pkcs8_encrypted_pem(pem, password)
+        match parse_private_key_pem(pem)? {
+            PrivateKeyDocument::Encrypted(document) => {
+                Self::from_pkcs8_encrypted_document(&document, password)
+            }
+            PrivateKeyDocument::Unencrypted(_) => Err(BundleError::Key(format!(
+                "invalid encrypted PKCS#8 Ed25519 private key: expected {ENCRYPTED_PRIVATE_KEY_LABEL:?} PEM label"
+            ))),
+        }
+    }
+
+    /// Decode either an encrypted or unencrypted PKCS#8 PEM private key,
+    /// using the password only when the PEM is encrypted. The PEM document is
+    /// decoded once before selecting the DER decoder. Requires the default
+    /// `encrypted-keys` feature.
+    #[cfg(feature = "encrypted-keys")]
+    pub fn from_pkcs8_pem_with_password(pem: &str, password: impl AsRef<[u8]>) -> Result<Self> {
+        match parse_private_key_pem(pem)? {
+            PrivateKeyDocument::Encrypted(document) => {
+                Self::from_pkcs8_encrypted_document(&document, password)
+            }
+            PrivateKeyDocument::Unencrypted(document) => Self::from_pkcs8_document(&document),
+        }
+    }
+
+    fn from_pkcs8_document(document: &SecretDocument) -> Result<Self> {
+        ed25519_dalek::SigningKey::from_pkcs8_der(document.as_bytes())
+            .map(Self)
+            .map_err(|error| {
+                BundleError::Key(format!("invalid PKCS#8 Ed25519 private key: {error}"))
+            })
+    }
+
+    #[cfg(feature = "encrypted-keys")]
+    fn from_pkcs8_encrypted_document(
+        document: &SecretDocument,
+        password: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        ed25519_dalek::SigningKey::from_pkcs8_encrypted_der(document.as_bytes(), password)
             .map(Self)
             .map_err(|error| {
                 BundleError::Key(format!(
                     "invalid encrypted PKCS#8 Ed25519 private key: {error}"
                 ))
             })
-    }
-
-    /// Decode either an encrypted or unencrypted PKCS#8 PEM private key,
-    /// using the password when the PEM is encrypted.
-    pub fn from_pkcs8_pem_with_password(pem: &str, password: impl AsRef<[u8]>) -> Result<Self> {
-        if is_encrypted_private_key(pem)? {
-            Self::from_pkcs8_encrypted_pem(pem, password)
-        } else {
-            Self::from_pkcs8_pem(pem)
-        }
     }
 
     pub fn key_id(&self) -> String {
@@ -275,12 +306,17 @@ fn key_id(key: &VerifyingKey) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn is_encrypted_private_key(pem: &str) -> Result<bool> {
-    let (label, _) = SecretDocument::from_pem(pem)
+enum PrivateKeyDocument {
+    Unencrypted(SecretDocument),
+    Encrypted(SecretDocument),
+}
+
+fn parse_private_key_pem(pem: &str) -> Result<PrivateKeyDocument> {
+    let (label, document) = SecretDocument::from_pem(pem)
         .map_err(|error| BundleError::Key(format!("invalid PKCS#8 private key PEM: {error}")))?;
     match label {
-        ENCRYPTED_PRIVATE_KEY_LABEL => Ok(true),
-        PRIVATE_KEY_LABEL => Ok(false),
+        ENCRYPTED_PRIVATE_KEY_LABEL => Ok(PrivateKeyDocument::Encrypted(document)),
+        PRIVATE_KEY_LABEL => Ok(PrivateKeyDocument::Unencrypted(document)),
         _ => Err(BundleError::Key(format!(
             "invalid PKCS#8 private key PEM label {label:?}"
         ))),
