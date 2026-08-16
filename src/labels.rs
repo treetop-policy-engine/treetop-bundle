@@ -1,11 +1,11 @@
 use crate::{BundleError, Diagnostic, Result};
 use cedar_policy::{EntityTypeName, Schema};
-use regex::{RegexSet, RegexSetBuilder};
+use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
-use treetop_core::{AttrValue, Labeler, Resource};
+use treetop_core::{AttrValue, Labeler, RegexLabeler, Resource};
 
 const MAX_LABEL_RULES: usize = 256;
 const MAX_PATTERNS_PER_RULE: usize = 1_024;
@@ -14,6 +14,10 @@ const MAX_REGEX_BYTES: usize = 16 * 1024;
 const MAX_TOTAL_REGEX_BYTES: usize = 1024 * 1024;
 const REGEX_SET_SIZE_LIMIT: usize = 2 * 1024 * 1024;
 const REGEX_SET_DFA_SIZE_LIMIT: usize = 1024 * 1024;
+const INDIVIDUAL_REGEX_THRESHOLD: usize = 4;
+const INDIVIDUAL_REGEX_SIZE_LIMIT: usize = REGEX_SET_SIZE_LIMIT / INDIVIDUAL_REGEX_THRESHOLD;
+const INDIVIDUAL_REGEX_DFA_SIZE_LIMIT: usize =
+    REGEX_SET_DFA_SIZE_LIMIT / INDIVIDUAL_REGEX_THRESHOLD;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,7 +68,13 @@ pub struct LabelRule {
     output: String,
     patterns: Vec<LabelPattern>,
     #[serde(skip)]
-    compiled: Arc<RegexSet>,
+    compiled: CompiledPatterns,
+}
+
+#[derive(Debug, Clone)]
+enum CompiledPatterns {
+    Individual(Arc<Vec<Regex>>),
+    Set(Arc<RegexSet>),
 }
 
 impl PartialEq for LabelRule {
@@ -269,18 +279,13 @@ impl LabelSet {
             }
 
             if patterns_valid {
-                let mut builder =
-                    RegexSetBuilder::new(patterns.iter().map(|pattern| pattern.regex.as_str()));
-                builder
-                    .size_limit(REGEX_SET_SIZE_LIMIT)
-                    .dfa_size_limit(REGEX_SET_DFA_SIZE_LIMIT);
-                match builder.build() {
+                match compile_patterns(&patterns) {
                     Ok(compiled) => rules.push(LabelRule {
                         kind: raw_rule.kind,
                         field: raw_rule.field,
                         output: raw_rule.output,
                         patterns,
-                        compiled: Arc::new(compiled),
+                        compiled,
                     }),
                     Err(error) => diagnostics.push(Diagnostic::error(
                         "labels.invalid_regex",
@@ -328,23 +333,39 @@ impl LabelSet {
         self.0.is_empty()
     }
 
-    /// Convert this validated set into runtime labelers backed by one regex set per rule.
+    /// Convert this validated set into bounded runtime regex labelers.
     pub fn to_labelers(&self) -> Vec<Arc<dyn Labeler>> {
         self.0
             .iter()
-            .map(|rule| {
-                let names = rule
-                    .patterns
-                    .iter()
-                    .map(|pattern| pattern.name.clone())
-                    .collect();
-                Arc::new(RegexSetLabeler {
-                    kind: rule.kind.clone(),
-                    field: rule.field.clone(),
-                    output: rule.output.clone(),
-                    names,
-                    compiled: Arc::clone(&rule.compiled),
-                }) as Arc<dyn Labeler>
+            .map(|rule| match &rule.compiled {
+                CompiledPatterns::Individual(compiled) => {
+                    let patterns = rule
+                        .patterns
+                        .iter()
+                        .zip(compiled.iter())
+                        .map(|(pattern, regex)| (pattern.name.clone(), regex.clone()))
+                        .collect();
+                    Arc::new(RegexLabeler::new(
+                        rule.kind.clone(),
+                        rule.field.clone(),
+                        rule.output.clone(),
+                        patterns,
+                    )) as Arc<dyn Labeler>
+                }
+                CompiledPatterns::Set(compiled) => {
+                    let names = rule
+                        .patterns
+                        .iter()
+                        .map(|pattern| pattern.name.clone())
+                        .collect();
+                    Arc::new(RegexSetLabeler {
+                        kind: rule.kind.clone(),
+                        field: rule.field.clone(),
+                        output: rule.output.clone(),
+                        names,
+                        compiled: Arc::clone(compiled),
+                    }) as Arc<dyn Labeler>
+                }
             })
             .collect()
     }
@@ -403,6 +424,33 @@ impl LabelSet {
             }
         }
         diagnostics
+    }
+}
+
+fn compile_patterns(
+    patterns: &[LabelPattern],
+) -> std::result::Result<CompiledPatterns, regex::Error> {
+    if patterns.len() <= INDIVIDUAL_REGEX_THRESHOLD {
+        let compiled = patterns
+            .iter()
+            .map(|pattern| {
+                let mut builder = RegexBuilder::new(&pattern.regex);
+                builder
+                    .size_limit(INDIVIDUAL_REGEX_SIZE_LIMIT)
+                    .dfa_size_limit(INDIVIDUAL_REGEX_DFA_SIZE_LIMIT);
+                builder.build()
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(CompiledPatterns::Individual(Arc::new(compiled)))
+    } else {
+        let mut builder =
+            RegexSetBuilder::new(patterns.iter().map(|pattern| pattern.regex.as_str()));
+        builder
+            .size_limit(REGEX_SET_SIZE_LIMIT)
+            .dfa_size_limit(REGEX_SET_DFA_SIZE_LIMIT);
+        builder
+            .build()
+            .map(|compiled| CompiledPatterns::Set(Arc::new(compiled)))
     }
 }
 
@@ -558,7 +606,7 @@ mod tests {
     #[test]
     fn regex_set_labeler_returns_all_matches_and_replaces_untrusted_output() {
         let labels = LabelSet::from_json_str(
-            r#"[{"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"prod","regex":"^prod"},{"name":"database","regex":"db$"}]}]"#,
+            r#"[{"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"prod","regex":"^prod"},{"name":"database","regex":"db$"},{"name":"staging","regex":"^staging"},{"name":"cache","regex":"cache$"},{"name":"worker","regex":"worker"}]}]"#,
         )
         .unwrap();
         let labeler = labels.to_labelers().pop().unwrap();

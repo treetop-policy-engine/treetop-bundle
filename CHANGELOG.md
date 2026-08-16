@@ -2,8 +2,10 @@
 
 ## [Unreleased]
 
-- Compile each label rule as a bounded `RegexSet`, enforce document-wide label
-  resource budgets, and benchmark large-set compilation and matching.
+- Compile large label rules as bounded `RegexSet`s while retaining a bounded
+  individual-regex fast path for small rules, enforce document-wide label
+  resource budgets, and benchmark each compilation and matching scenario
+  independently.
 - Stream tar data through gzip during archive encoding and decoding, avoid
   artifact clones, and remove the redundant post-signing decompression pass.
 - Atomically create CLI output files, bound archive, private-key, and password
@@ -13,7 +15,8 @@
   validation.
 - Replace quadratic namespace-overlap checks with sorted adjacent checks and
   reuse parsed policies for aggregate validation.
-- Add end-to-end archive validation and re-signing regression benchmarks.
+- Add independently fanned-out archive validation and re-signing regression
+  benchmarks, with one measured scenario per Cargo benchmark target.
 - Accept password-encrypted PKCS#8 Ed25519 signing keys, with passwords read
   from a file, `TREETOP_BUNDLE_SIGNING_KEY_PASSWORD`, or a hidden terminal
   prompt.

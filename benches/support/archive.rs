@@ -1,12 +1,15 @@
+#![allow(dead_code)]
+
+#[cfg(feature = "encrypted-keys")]
 use ed25519_dalek::pkcs8::EncodePrivateKey;
-use gungraun::{library_benchmark, library_benchmark_group, main};
+#[cfg(feature = "encrypted-keys")]
 use pkcs8::LineEnding;
 use std::fs;
-use treetop_bundle::{
-    ArchiveLimits, BundleArchive, BundleBuilder, SignaturePolicy, SigningKey, TrustStore,
-};
+#[cfg(feature = "encrypted-keys")]
+use treetop_bundle::SigningKey;
+use treetop_bundle::{BundleArchive, BundleBuilder};
 
-fn unsigned_archive() -> BundleArchive {
+pub fn unsigned_archive() -> BundleArchive {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path();
     let policies = (0..128)
@@ -48,23 +51,14 @@ manifest = "treetop-module.toml"
         .unwrap()
 }
 
-#[library_benchmark(setup = unsigned_archive)]
-fn validate_archive(archive: BundleArchive) {
-    let _ = archive
-        .validate(
-            SignaturePolicy::AllowUnsigned,
-            &TrustStore::new(),
-            ArchiveLimits::default(),
-        )
-        .unwrap();
+#[cfg(feature = "encrypted-keys")]
+pub struct ResignFixture {
+    pub archive: BundleArchive,
+    pub key: SigningKey,
 }
 
-struct ResignFixture {
-    archive: BundleArchive,
-    key: SigningKey,
-}
-
-fn resign_fixture() -> ResignFixture {
+#[cfg(feature = "encrypted-keys")]
+pub fn resign_fixture() -> ResignFixture {
     let pem = ed25519_dalek::SigningKey::from_bytes(&[42; 32])
         .to_pkcs8_pem(LineEnding::LF)
         .unwrap();
@@ -73,18 +67,3 @@ fn resign_fixture() -> ResignFixture {
         key: SigningKey::from_pkcs8_pem(pem.as_str()).unwrap(),
     }
 }
-
-#[library_benchmark(setup = resign_fixture)]
-fn resign_archive(fixture: ResignFixture) {
-    let _ = fixture
-        .archive
-        .resign(&fixture.key, ArchiveLimits::default())
-        .unwrap();
-}
-
-library_benchmark_group!(
-    name = archive;
-    benchmarks = validate_archive, resign_archive
-);
-
-main!(library_benchmark_groups = archive);
