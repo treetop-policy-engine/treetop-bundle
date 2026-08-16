@@ -43,6 +43,7 @@ tar = "0.4.44"
 thiserror = "2.0.16"
 toml = "0.9.5"
 treetop-core = "=0.0.21"
+zeroize = "1.9.0"
 
 [dev-dependencies]
 gungraun = "0.19.4"
@@ -58,6 +59,11 @@ harness = false
 
 [[bench]]
 name = "signing_key_load_callgrind"
+harness = false
+required-features = ["encrypted-keys"]
+
+[[bench]]
+name = "archive_callgrind"
 harness = false
 required-features = ["encrypted-keys"]
 

@@ -1,17 +1,20 @@
 use crate::{BundleError, FORMAT_VERSION, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::pkcs8::{DecodePrivateKey, DecodePublicKey, SecretDocument};
-use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::Path;
 use std::str::FromStr;
+use zeroize::Zeroizing;
 
 const SIGNATURE_DOMAIN: &[u8] = b"treetop-bundle-signature-v1\0";
 const PRIVATE_KEY_LABEL: &str = "PRIVATE KEY";
 const ENCRYPTED_PRIVATE_KEY_LABEL: &str = "ENCRYPTED PRIVATE KEY";
+const MAX_PRIVATE_KEY_BYTES: usize = 1024 * 1024;
 
 /// Signature requirements applied while opening an archive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,6 +224,11 @@ impl TrustedKey {
         let key = VerifyingKey::from_public_key_pem(pem).map_err(|error| {
             BundleError::Key(format!("invalid SPKI Ed25519 public key: {error}"))
         })?;
+        if key.is_weak() {
+            return Err(BundleError::Key(
+                "weak Ed25519 public keys are not accepted".to_string(),
+            ));
+        }
         Ok(Self {
             key_id: key_id(&key),
             key,
@@ -240,7 +248,7 @@ impl TrustedKey {
         message.extend_from_slice(SIGNATURE_DOMAIN);
         message.extend_from_slice(manifest);
         self.key
-            .verify(&message, signature)
+            .verify_strict(&message, signature)
             .map_err(|_| BundleError::Archive("invalid_signature".to_string()))
     }
 }
@@ -323,11 +331,20 @@ fn parse_private_key_pem(pem: &str) -> Result<PrivateKeyDocument> {
     }
 }
 
-fn read_private_key(path: &Path) -> Result<String> {
+fn read_private_key(path: &Path) -> Result<Zeroizing<String>> {
+    let file = File::open(path).map_err(|error| BundleError::io(path, error))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| BundleError::io(path, error))?;
+    if !metadata.is_file() {
+        return Err(BundleError::Key(format!(
+            "private key path {} is not a regular file",
+            path.display()
+        )));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::metadata(path).map_err(|error| BundleError::io(path, error))?;
         if metadata.permissions().mode() & 0o077 != 0 {
             return Err(BundleError::Key(format!(
                 "private key file {} is accessible by group or others",
@@ -335,5 +352,21 @@ fn read_private_key(path: &Path) -> Result<String> {
             )));
         }
     }
-    fs::read_to_string(path).map_err(|error| BundleError::io(path, error))
+    if metadata.len() > MAX_PRIVATE_KEY_BYTES as u64 {
+        return Err(BundleError::Key(format!(
+            "private key file {} exceeds {MAX_PRIVATE_KEY_BYTES} bytes",
+            path.display()
+        )));
+    }
+    let mut pem = Zeroizing::new(String::new());
+    file.take((MAX_PRIVATE_KEY_BYTES as u64) + 1)
+        .read_to_string(&mut pem)
+        .map_err(|error| BundleError::io(path, error))?;
+    if pem.len() > MAX_PRIVATE_KEY_BYTES {
+        return Err(BundleError::Key(format!(
+            "private key file {} exceeds {MAX_PRIVATE_KEY_BYTES} bytes",
+            path.display()
+        )));
+    }
+    Ok(pem)
 }

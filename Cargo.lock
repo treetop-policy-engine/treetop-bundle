@@ -2096,6 +2096,7 @@ dependencies = [
  "thiserror",
  "toml",
  "treetop-core",
+ "zeroize",
 ]
 
 [[package]]

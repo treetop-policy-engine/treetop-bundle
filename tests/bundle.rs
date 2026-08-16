@@ -498,6 +498,23 @@ fn compressed_limit_is_enforced_before_decoding() {
 }
 
 #[test]
+fn compressed_file_limit_is_enforced_while_reading() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("oversized.tar.gz");
+    fs::write(&path, [0; 16]).unwrap();
+
+    let error = BundleArchive::read(&path, 8).unwrap_err();
+
+    assert!(matches!(
+        error,
+        BundleError::SizeLimit {
+            kind: "compressed",
+            limit: 8
+        }
+    ));
+}
+
+#[test]
 fn label_destinations_are_unique() {
     let error = LabelSet::from_json_str(
         r#"[
@@ -526,6 +543,20 @@ fn private_key_file_permissions_are_enforced() {
     write(&path, &pem);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
     assert!(SigningKey::from_pkcs8_pem_file(&path).is_err());
+}
+
+#[test]
+fn weak_public_keys_are_rejected() {
+    let mut der = vec![
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ];
+    der.push(1);
+    der.extend([0; 31]);
+    let weak = pem("PUBLIC KEY", &der);
+
+    let error = TrustedKey::from_spki_pem(&weak).unwrap_err();
+
+    assert!(error.to_string().contains("weak Ed25519 public key"));
 }
 
 #[test]

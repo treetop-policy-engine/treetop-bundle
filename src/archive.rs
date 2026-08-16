@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::fs::File;
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Component, Path};
 use tar::{Archive, Builder, EntryType, Header};
 use treetop_core::{LabelRegistryBuilder, PolicyEngine};
@@ -38,6 +38,8 @@ impl ArchiveLimits {
                 "archive size limits must be greater than zero".to_string(),
             ));
         }
+        limit_plus_one(max_compressed_bytes, "compressed")?;
+        limit_plus_one(max_uncompressed_bytes, "uncompressed")?;
         Ok(Self {
             max_compressed_bytes,
             max_uncompressed_bytes,
@@ -244,14 +246,36 @@ impl BundleArchive {
 
     pub fn read(path: impl AsRef<Path>, max_compressed_bytes: usize) -> Result<Self> {
         let path = path.as_ref();
-        let metadata = fs::metadata(path).map_err(|error| BundleError::io(path, error))?;
+        let file = File::open(path).map_err(|error| BundleError::io(path, error))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| BundleError::io(path, error))?;
+        if !metadata.is_file() {
+            return Err(BundleError::io(
+                path,
+                io::Error::new(io::ErrorKind::InvalidInput, "archive is not a regular file"),
+            ));
+        }
         if metadata.len() > max_compressed_bytes as u64 {
             return Err(BundleError::SizeLimit {
                 kind: "compressed",
                 limit: max_compressed_bytes,
             });
         }
-        let bytes = fs::read(path).map_err(|error| BundleError::io(path, error))?;
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(metadata.len())
+                .unwrap_or(max_compressed_bytes)
+                .min(max_compressed_bytes),
+        );
+        file.take(limit_plus_one(max_compressed_bytes, "compressed")?)
+            .read_to_end(&mut bytes)
+            .map_err(|error| BundleError::io(path, error))?;
+        if bytes.len() > max_compressed_bytes {
+            return Err(BundleError::SizeLimit {
+                kind: "compressed",
+                limit: max_compressed_bytes,
+            });
+        }
         Ok(Self { bytes })
     }
 
@@ -279,7 +303,7 @@ impl BundleArchive {
     /// Validate and re-sign an archive, replacing its existing signature.
     pub fn resign(&self, key: &SigningKey, limits: ArchiveLimits) -> Result<Self> {
         let decoded = decode_archive(&self.bytes, limits)?;
-        let (manifest, _, _) = validate_decoded(
+        validate_decoded(
             &decoded,
             SignaturePolicy::AllowUnsigned,
             &TrustStore::new(),
@@ -287,20 +311,12 @@ impl BundleArchive {
         )?;
         let signature = key.sign_manifest(&decoded.manifest);
         let signature_bytes = canonical_json_bytes(&signature)?;
-        let artifacts = artifact_entries(&decoded);
-        let bytes = encode_archive(&decoded.manifest, Some(&signature_bytes), &artifacts)?;
-        let rebuilt = Self { bytes };
-
-        // Preserve the logical identity by construction and guard it explicitly.
-        let rebuilt_decoded = decode_archive(&rebuilt.bytes, limits)?;
-        let rebuilt_manifest: ArchiveManifest =
-            parse_json(MANIFEST_PATH, &rebuilt_decoded.manifest)?;
-        if rebuilt_manifest.bundle_id != manifest.bundle_id {
-            return Err(BundleError::Archive(
-                "re-signing changed the logical bundle ID".to_string(),
-            ));
-        }
-        Ok(rebuilt)
+        let bytes = encode_archive(
+            &decoded.manifest,
+            Some(&signature_bytes),
+            artifact_entries(&decoded),
+        )?;
+        Ok(Self { bytes })
     }
 
     fn validate_inner(
@@ -369,7 +385,13 @@ impl BundleArchive {
         let signature_bytes = key
             .map(|key| canonical_json_bytes(&key.sign_manifest(&manifest_bytes)))
             .transpose()?;
-        let bytes = encode_archive(&manifest_bytes, signature_bytes.as_deref(), &artifact_data)?;
+        let bytes = encode_archive(
+            &manifest_bytes,
+            signature_bytes.as_deref(),
+            artifact_data
+                .iter()
+                .map(|(path, contents)| (path.as_str(), contents.as_slice())),
+        )?;
         Ok(Self { bytes })
     }
 }
@@ -390,71 +412,73 @@ fn decode_archive(bytes: &[u8], limits: ArchiveLimits) -> Result<DecodedArchive>
         });
     }
     let cursor = Cursor::new(bytes);
-    let mut decoder = GzDecoder::new(cursor);
-    let mut uncompressed = Vec::new();
-    decoder
-        .by_ref()
-        .take((limits.max_uncompressed_bytes as u64) + 1)
-        .read_to_end(&mut uncompressed)
+    let decoder = GzDecoder::new(cursor);
+    let limited = decoder.take(limit_plus_one(
+        limits.max_uncompressed_bytes,
+        "uncompressed",
+    )?);
+    let mut archive = Archive::new(limited);
+    let mut entries = Vec::new();
+    {
+        let archive_entries = archive
+            .entries()
+            .map_err(|error| BundleError::Archive(format!("tar decoding failed: {error}")))?;
+        for entry in archive_entries {
+            let mut entry = entry
+                .map_err(|error| BundleError::Archive(format!("tar entry is invalid: {error}")))?;
+            if entries.len() == 5 {
+                return Err(BundleError::Archive(
+                    "bundle archive contains more than five entries".to_string(),
+                ));
+            }
+            if entry.header().entry_type() != EntryType::Regular {
+                return Err(BundleError::Archive(
+                    "only regular tar entries are allowed".to_string(),
+                ));
+            }
+            let path = entry
+                .path()
+                .map_err(|error| BundleError::Archive(format!("invalid tar path: {error}")))?
+                .into_owned();
+            if path.is_absolute()
+                || path.components().count() != 1
+                || path.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                return Err(BundleError::Archive(format!(
+                    "unsafe tar entry path {}",
+                    path.display()
+                )));
+            }
+            let name = path
+                .to_str()
+                .ok_or_else(|| BundleError::Archive("tar path is not UTF-8".to_string()))?
+                .to_string();
+            let mut contents = Vec::new();
+            entry
+                .read_to_end(&mut contents)
+                .map_err(|error| BundleError::Archive(format!("cannot read tar entry: {error}")))?;
+            entries.push((name, contents));
+        }
+    }
+    let mut limited = archive.into_inner();
+    io::copy(&mut limited, &mut io::sink())
         .map_err(|error| BundleError::Archive(format!("gzip decoding failed: {error}")))?;
-    if uncompressed.len() > limits.max_uncompressed_bytes {
+    if limited.limit() == 0 {
         return Err(BundleError::SizeLimit {
             kind: "uncompressed",
             limit: limits.max_uncompressed_bytes,
         });
     }
-    let cursor = decoder.into_inner();
+    let cursor = limited.into_inner().into_inner();
     if cursor.position() != bytes.len() as u64 {
         return Err(BundleError::Archive(
             "concatenated gzip members or trailing bytes are not allowed".to_string(),
         ));
-    }
-
-    let mut archive = Archive::new(Cursor::new(uncompressed));
-    let mut entries = Vec::new();
-    let archive_entries = archive
-        .entries()
-        .map_err(|error| BundleError::Archive(format!("tar decoding failed: {error}")))?;
-    for entry in archive_entries {
-        let mut entry = entry
-            .map_err(|error| BundleError::Archive(format!("tar entry is invalid: {error}")))?;
-        if entries.len() == 5 {
-            return Err(BundleError::Archive(
-                "bundle archive contains more than five entries".to_string(),
-            ));
-        }
-        if entry.header().entry_type() != EntryType::Regular {
-            return Err(BundleError::Archive(
-                "only regular tar entries are allowed".to_string(),
-            ));
-        }
-        let path = entry
-            .path()
-            .map_err(|error| BundleError::Archive(format!("invalid tar path: {error}")))?
-            .into_owned();
-        if path.is_absolute()
-            || path.components().count() != 1
-            || path.components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-        {
-            return Err(BundleError::Archive(format!(
-                "unsafe tar entry path {}",
-                path.display()
-            )));
-        }
-        let name = path
-            .to_str()
-            .ok_or_else(|| BundleError::Archive("tar path is not UTF-8".to_string()))?
-            .to_string();
-        let mut contents = Vec::new();
-        entry
-            .read_to_end(&mut contents)
-            .map_err(|error| BundleError::Archive(format!("cannot read tar entry: {error}")))?;
-        entries.push((name, contents));
     }
 
     let names = entries
@@ -639,15 +663,6 @@ fn validate_manifest(manifest: &ArchiveManifest) -> Result<()> {
                 "manifest contains duplicate module names".to_string(),
             ));
         }
-        for existing in &namespaces {
-            if crate::manifest::namespace_owns(existing, &module.namespace)
-                || crate::manifest::namespace_owns(&module.namespace, existing)
-            {
-                return Err(BundleError::Archive(
-                    "manifest contains overlapping module namespaces".to_string(),
-                ));
-            }
-        }
         namespaces.push(module.namespace.as_str());
         let mut imports = HashSet::new();
         if module.imports.iter().any(|import| {
@@ -669,6 +684,15 @@ fn validate_manifest(manifest: &ArchiveManifest) -> Result<()> {
             ));
         }
     }
+    namespaces.sort_unstable();
+    if namespaces.windows(2).any(|pair| {
+        crate::manifest::namespace_owns(pair[0], pair[1])
+            || crate::manifest::namespace_owns(pair[1], pair[0])
+    }) {
+        return Err(BundleError::Archive(
+            "manifest contains overlapping module namespaces".to_string(),
+        ));
+    }
     if assigned_policy_ids
         != manifest
             .policy_ids
@@ -683,46 +707,43 @@ fn validate_manifest(manifest: &ArchiveManifest) -> Result<()> {
     Ok(())
 }
 
-fn artifact_entries(decoded: &DecodedArchive) -> Vec<(String, Vec<u8>)> {
-    let mut entries = vec![(POLICIES_PATH.to_string(), decoded.policies.clone())];
+fn artifact_entries(decoded: &DecodedArchive) -> Vec<(&'static str, &[u8])> {
+    let mut entries = vec![(POLICIES_PATH, decoded.policies.as_slice())];
     if let Some(schema) = &decoded.schema {
-        entries.push((SCHEMA_PATH.to_string(), schema.clone()));
+        entries.push((SCHEMA_PATH, schema.as_slice()));
     }
-    entries.push((LABELS_PATH.to_string(), decoded.labels.clone()));
+    entries.push((LABELS_PATH, decoded.labels.as_slice()));
     entries
 }
 
-fn encode_archive(
+fn encode_archive<'a>(
     manifest: &[u8],
     signature: Option<&[u8]>,
-    artifacts: &[(String, Vec<u8>)],
+    artifacts: impl IntoIterator<Item = (&'a str, &'a [u8])>,
 ) -> Result<Vec<u8>> {
-    let mut tar_bytes = Vec::new();
-    {
-        let mut builder = Builder::new(&mut tar_bytes);
-        append_tar_file(&mut builder, MANIFEST_PATH, manifest)?;
-        if let Some(signature) = signature {
-            append_tar_file(&mut builder, SIGNATURE_PATH, signature)?;
-        }
-        for (path, contents) in artifacts {
-            append_tar_file(&mut builder, path, contents)?;
-        }
-        builder
-            .finish()
-            .map_err(|error| BundleError::Archive(format!("tar encoding failed: {error}")))?;
-    }
-    let mut encoder = GzBuilder::new()
+    let encoder = GzBuilder::new()
         .mtime(0)
         .write(Vec::new(), Compression::default());
-    encoder
-        .write_all(&tar_bytes)
-        .map_err(|error| BundleError::Archive(format!("gzip encoding failed: {error}")))?;
+    let mut builder = Builder::new(encoder);
+    append_tar_file(&mut builder, MANIFEST_PATH, manifest)?;
+    if let Some(signature) = signature {
+        append_tar_file(&mut builder, SIGNATURE_PATH, signature)?;
+    }
+    for (path, contents) in artifacts {
+        append_tar_file(&mut builder, path, contents)?;
+    }
+    builder
+        .finish()
+        .map_err(|error| BundleError::Archive(format!("tar encoding failed: {error}")))?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|error| BundleError::Archive(format!("tar encoding failed: {error}")))?;
     encoder
         .finish()
         .map_err(|error| BundleError::Archive(format!("gzip encoding failed: {error}")))
 }
 
-fn append_tar_file(builder: &mut Builder<&mut Vec<u8>>, path: &str, contents: &[u8]) -> Result<()> {
+fn append_tar_file<W: Write>(builder: &mut Builder<W>, path: &str, contents: &[u8]) -> Result<()> {
     let mut header = Header::new_gnu();
     header.set_entry_type(EntryType::Regular);
     header.set_mode(0o644);
@@ -787,4 +808,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn limit_plus_one(limit: usize, kind: &'static str) -> Result<u64> {
+    u64::try_from(limit)
+        .ok()
+        .and_then(|limit| limit.checked_add(1))
+        .ok_or_else(|| BundleError::Archive(format!("{kind} size limit is too large to enforce")))
 }

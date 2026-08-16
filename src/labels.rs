@@ -1,11 +1,19 @@
 use crate::{BundleError, Diagnostic, Result};
 use cedar_policy::{EntityTypeName, Schema};
-use regex::Regex;
+use regex::{RegexSet, RegexSetBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
-use treetop_core::{Labeler, RegexLabeler};
+use treetop_core::{AttrValue, Labeler, Resource};
+
+const MAX_LABEL_RULES: usize = 256;
+const MAX_PATTERNS_PER_RULE: usize = 1_024;
+const MAX_TOTAL_PATTERNS: usize = 4_096;
+const MAX_REGEX_BYTES: usize = 16 * 1024;
+const MAX_TOTAL_REGEX_BYTES: usize = 1024 * 1024;
+const REGEX_SET_SIZE_LIMIT: usize = 2 * 1024 * 1024;
+const REGEX_SET_DFA_SIZE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,8 +27,6 @@ struct RawLabelPattern {
 pub struct LabelPattern {
     name: String,
     regex: String,
-    #[serde(skip)]
-    compiled: Regex,
 }
 
 impl PartialEq for LabelPattern {
@@ -51,12 +57,56 @@ struct RawLabelRule {
 }
 
 /// A validated label rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LabelRule {
     kind: String,
     field: String,
     output: String,
     patterns: Vec<LabelPattern>,
+    #[serde(skip)]
+    compiled: Arc<RegexSet>,
+}
+
+impl PartialEq for LabelRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.field == other.field
+            && self.output == other.output
+            && self.patterns == other.patterns
+    }
+}
+
+impl Eq for LabelRule {}
+
+#[derive(Debug)]
+struct RegexSetLabeler {
+    kind: String,
+    field: String,
+    output: String,
+    names: Vec<String>,
+    compiled: Arc<RegexSet>,
+}
+
+impl Labeler for RegexSetLabeler {
+    fn applies_to(&self, kind: &str) -> bool {
+        self.kind == kind
+    }
+
+    fn apply(&self, resource: &mut Resource) {
+        let Some(AttrValue::String(value)) = resource.attributes().get(&self.field) else {
+            resource.attrs().remove(&self.output);
+            return;
+        };
+        let labels = self
+            .compiled
+            .matches(value)
+            .iter()
+            .map(|index| AttrValue::String(self.names[index].clone()))
+            .collect();
+        resource
+            .attrs()
+            .insert(self.output.clone(), AttrValue::Set(labels));
+    }
 }
 
 impl LabelRule {
@@ -117,6 +167,8 @@ impl LabelSet {
     }
 
     fn from_raw(raw: Vec<RawLabelRule>) -> Result<Self> {
+        validate_document_limits(&raw)?;
+
         let mut diagnostics = Vec::new();
         let mut destinations = HashSet::new();
         let mut rules = Vec::with_capacity(raw.len());
@@ -167,9 +219,19 @@ impl LabelSet {
                     format!("{location}.patterns must not be empty"),
                 ));
             }
+            if raw_rule.patterns.len() > MAX_PATTERNS_PER_RULE {
+                diagnostics.push(Diagnostic::error(
+                    "labels.too_many_patterns",
+                    format!(
+                        "{location}.patterns contains more than {MAX_PATTERNS_PER_RULE} entries"
+                    ),
+                ));
+            }
 
             let mut names = HashSet::new();
             let mut patterns = Vec::with_capacity(raw_rule.patterns.len());
+            let mut patterns_valid =
+                !raw_rule.patterns.is_empty() && raw_rule.patterns.len() <= MAX_PATTERNS_PER_RULE;
             for (pattern_index, raw_pattern) in raw_rule.patterns.into_iter().enumerate() {
                 let pattern_location = format!("{location}.patterns[{pattern_index}]");
                 if raw_pattern.name.trim().is_empty() {
@@ -187,39 +249,45 @@ impl LabelSet {
                         ),
                     ));
                 }
-                let compiled = if raw_pattern.regex.is_empty() {
+                if raw_pattern.regex.is_empty() {
                     diagnostics.push(Diagnostic::error(
                         "labels.empty_regex",
                         format!("{pattern_location}.regex must not be empty"),
                     ));
-                    None
-                } else {
-                    match Regex::new(&raw_pattern.regex) {
-                        Ok(regex) => Some(regex),
-                        Err(error) => {
-                            diagnostics.push(Diagnostic::error(
-                                "labels.invalid_regex",
-                                format!("{pattern_location}.regex is invalid: {error}"),
-                            ));
-                            None
-                        }
-                    }
-                };
-                if let Some(compiled) = compiled {
-                    patterns.push(LabelPattern {
-                        name: raw_pattern.name,
-                        regex: raw_pattern.regex,
-                        compiled,
-                    });
+                    patterns_valid = false;
+                } else if raw_pattern.regex.len() > MAX_REGEX_BYTES {
+                    diagnostics.push(Diagnostic::error(
+                        "labels.regex_too_large",
+                        format!("{pattern_location}.regex exceeds {MAX_REGEX_BYTES} bytes"),
+                    ));
+                    patterns_valid = false;
                 }
+                patterns.push(LabelPattern {
+                    name: raw_pattern.name,
+                    regex: raw_pattern.regex,
+                });
             }
 
-            rules.push(LabelRule {
-                kind: raw_rule.kind,
-                field: raw_rule.field,
-                output: raw_rule.output,
-                patterns,
-            });
+            if patterns_valid {
+                let mut builder =
+                    RegexSetBuilder::new(patterns.iter().map(|pattern| pattern.regex.as_str()));
+                builder
+                    .size_limit(REGEX_SET_SIZE_LIMIT)
+                    .dfa_size_limit(REGEX_SET_DFA_SIZE_LIMIT);
+                match builder.build() {
+                    Ok(compiled) => rules.push(LabelRule {
+                        kind: raw_rule.kind,
+                        field: raw_rule.field,
+                        output: raw_rule.output,
+                        patterns,
+                        compiled: Arc::new(compiled),
+                    }),
+                    Err(error) => diagnostics.push(Diagnostic::error(
+                        "labels.invalid_regex",
+                        format!("{location}.patterns cannot be compiled safely: {error}"),
+                    )),
+                }
+            }
         }
 
         if diagnostics.is_empty() {
@@ -231,6 +299,7 @@ impl LabelSet {
 
     pub(crate) fn combine(sets: impl IntoIterator<Item = Self>) -> Result<Self> {
         let rules = sets.into_iter().flat_map(|set| set.0).collect::<Vec<_>>();
+        validate_combined_limits(&rules)?;
         let mut destinations = HashSet::with_capacity(rules.len());
         let mut diagnostics = Vec::new();
         for rule in &rules {
@@ -259,22 +328,23 @@ impl LabelSet {
         self.0.is_empty()
     }
 
-    /// Convert this validated set into Treetop's existing runtime labelers.
+    /// Convert this validated set into runtime labelers backed by one regex set per rule.
     pub fn to_labelers(&self) -> Vec<Arc<dyn Labeler>> {
         self.0
             .iter()
             .map(|rule| {
-                let patterns = rule
+                let names = rule
                     .patterns
                     .iter()
-                    .map(|pattern| (pattern.name.clone(), pattern.compiled.clone()))
+                    .map(|pattern| pattern.name.clone())
                     .collect();
-                Arc::new(RegexLabeler::new(
-                    rule.kind.clone(),
-                    rule.field.clone(),
-                    rule.output.clone(),
-                    patterns,
-                )) as Arc<dyn Labeler>
+                Arc::new(RegexSetLabeler {
+                    kind: rule.kind.clone(),
+                    field: rule.field.clone(),
+                    output: rule.output.clone(),
+                    names,
+                    compiled: Arc::clone(&rule.compiled),
+                }) as Arc<dyn Labeler>
             })
             .collect()
     }
@@ -334,6 +404,74 @@ impl LabelSet {
         }
         diagnostics
     }
+}
+
+fn validate_document_limits(raw: &[RawLabelRule]) -> Result<()> {
+    if raw.len() > MAX_LABEL_RULES {
+        return Err(BundleError::Validation(vec![Diagnostic::error(
+            "labels.too_many_rules",
+            format!("label document contains more than {MAX_LABEL_RULES} rules"),
+        )]));
+    }
+    let total_patterns = raw
+        .iter()
+        .try_fold(0usize, |total, rule| total.checked_add(rule.patterns.len()))
+        .unwrap_or(usize::MAX);
+    if total_patterns > MAX_TOTAL_PATTERNS {
+        return Err(BundleError::Validation(vec![Diagnostic::error(
+            "labels.too_many_patterns",
+            format!("label document contains more than {MAX_TOTAL_PATTERNS} patterns"),
+        )]));
+    }
+    let total_regex_bytes = raw
+        .iter()
+        .flat_map(|rule| &rule.patterns)
+        .try_fold(0usize, |total, pattern| {
+            total.checked_add(pattern.regex.len())
+        })
+        .unwrap_or(usize::MAX);
+    if total_regex_bytes > MAX_TOTAL_REGEX_BYTES {
+        return Err(BundleError::Validation(vec![Diagnostic::error(
+            "labels.regex_budget_exceeded",
+            format!("label document regex sources exceed {MAX_TOTAL_REGEX_BYTES} total bytes"),
+        )]));
+    }
+    Ok(())
+}
+
+fn validate_combined_limits(rules: &[LabelRule]) -> Result<()> {
+    if rules.len() > MAX_LABEL_RULES {
+        return Err(BundleError::Validation(vec![Diagnostic::error(
+            "labels.too_many_rules",
+            format!("combined label document contains more than {MAX_LABEL_RULES} rules"),
+        )]));
+    }
+    let total_patterns = rules
+        .iter()
+        .try_fold(0usize, |total, rule| total.checked_add(rule.patterns.len()))
+        .unwrap_or(usize::MAX);
+    if total_patterns > MAX_TOTAL_PATTERNS {
+        return Err(BundleError::Validation(vec![Diagnostic::error(
+            "labels.too_many_patterns",
+            format!("combined label document contains more than {MAX_TOTAL_PATTERNS} patterns"),
+        )]));
+    }
+    let total_regex_bytes = rules
+        .iter()
+        .flat_map(|rule| &rule.patterns)
+        .try_fold(0usize, |total, pattern| {
+            total.checked_add(pattern.regex.len())
+        })
+        .unwrap_or(usize::MAX);
+    if total_regex_bytes > MAX_TOTAL_REGEX_BYTES {
+        return Err(BundleError::Validation(vec![Diagnostic::error(
+            "labels.regex_budget_exceeded",
+            format!(
+                "combined label document regex sources exceed {MAX_TOTAL_REGEX_BYTES} total bytes"
+            ),
+        )]));
+    }
+    Ok(())
 }
 
 fn entity_attributes<'a>(
@@ -415,6 +553,67 @@ mod tests {
         )
         .unwrap();
         assert_eq!(labels.to_labelers().len(), 1);
+    }
+
+    #[test]
+    fn regex_set_labeler_returns_all_matches_and_replaces_untrusted_output() {
+        let labels = LabelSet::from_json_str(
+            r#"[{"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"prod","regex":"^prod"},{"name":"database","regex":"db$"}]}]"#,
+        )
+        .unwrap();
+        let labeler = labels.to_labelers().pop().unwrap();
+        let mut resource = Resource::new("App::Host", "one")
+            .with_attr("name", AttrValue::String("prod-db".to_string()))
+            .with_attr(
+                "labels",
+                AttrValue::Set(vec![AttrValue::String("forged".to_string())]),
+            );
+
+        labeler.apply(&mut resource);
+
+        assert_eq!(
+            resource.attributes().get("labels"),
+            Some(&AttrValue::Set(vec![
+                AttrValue::String("prod".to_string()),
+                AttrValue::String("database".to_string()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn label_document_pattern_budget_is_enforced_before_compilation() {
+        let patterns = (0..=MAX_TOTAL_PATTERNS)
+            .map(|index| {
+                serde_json::json!({
+                    "name": format!("pattern-{index}"),
+                    "regex": "a",
+                })
+            })
+            .collect::<Vec<_>>();
+        let source = serde_json::json!([{
+            "kind": "App::Host",
+            "field": "name",
+            "output": "labels",
+            "patterns": patterns,
+        }])
+        .to_string();
+
+        let error = LabelSet::from_json_str(&source).unwrap_err();
+
+        assert_eq!(error.diagnostics()[0].code, "labels.too_many_patterns");
+    }
+
+    #[test]
+    fn combined_label_sets_reapply_document_limits() {
+        let labels = LabelSet::from_json_str(
+            r#"[{"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"prod","regex":"^prod"}]}]"#,
+        )
+        .unwrap();
+
+        let error =
+            LabelSet::combine(std::iter::repeat_n(labels, MAX_LABEL_RULES + 1)).unwrap_err();
+
+        assert_eq!(error.diagnostics()[0].code, "labels.too_many_rules");
     }
 
     #[test]
