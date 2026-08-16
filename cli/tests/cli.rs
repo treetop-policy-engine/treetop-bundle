@@ -102,7 +102,7 @@ fn build_emits_structured_content_errors_and_exit_one() {
 #[test]
 fn signing_key_password_is_read_from_the_environment() {
     let temporary = tempfile::tempdir().unwrap();
-    let key = encrypted_key_file(temporary.path(), "vault secret");
+    let key = encrypted_key_file(temporary.path(), b"vault secret");
     let output_path = temporary.path().join("signed.tar.gz");
 
     let output = run_with_env(
@@ -124,11 +124,12 @@ fn signing_key_password_is_read_from_the_environment() {
 }
 
 #[test]
-fn password_file_takes_precedence_over_the_environment() {
+fn non_utf8_password_file_takes_precedence_over_the_environment() {
     let temporary = tempfile::tempdir().unwrap();
-    let key = encrypted_key_file(temporary.path(), "file secret");
+    let password = [0xff, 0xfe, b'x'];
+    let key = encrypted_key_file(temporary.path(), &password);
     let password_file = temporary.path().join("password");
-    write(&password_file, "file secret\r\n");
+    fs::write(&password_file, [password.as_slice(), b"\r\n"].concat()).unwrap();
     let output_path = temporary.path().join("signed.tar.gz");
 
     let output = run_with_env(
@@ -166,7 +167,7 @@ fn run_with_env<const N: usize>(args: [&str; N], name: &str, value: &str) -> Out
         .unwrap()
 }
 
-fn encrypted_key_file(root: &Path, password: &str) -> PathBuf {
+fn encrypted_key_file(root: &Path, password: &[u8]) -> PathBuf {
     let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
     let der = key.to_pkcs8_der().unwrap();
     let private_key = PrivateKeyInfo::try_from(der.as_bytes()).unwrap();

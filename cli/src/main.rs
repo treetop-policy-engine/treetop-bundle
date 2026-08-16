@@ -348,17 +348,18 @@ fn read_string(path: &Path) -> Result<String, BundleError> {
 
 fn load_signing_key(path: &Path, password_file: Option<&Path>) -> Result<SigningKey, BundleError> {
     if let Some(password) = configured_signing_key_password(password_file)? {
-        return SigningKey::from_pkcs8_pem_file_with_password(path, password.as_bytes());
+        return SigningKey::from_pkcs8_pem_file_with_password(path, password.as_slice());
     }
 
     match SigningKey::from_pkcs8_pem_file(path) {
         Err(BundleError::SigningKeyPasswordRequired) => {
             let password = rpassword::prompt_password("Signing key password: ")
+                .map(String::into_bytes)
                 .map(Zeroizing::new)
                 .map_err(|error| {
                     BundleError::Key(format!("failed to read signing-key password: {error}"))
                 })?;
-            SigningKey::from_pkcs8_encrypted_pem_file(path, password.as_bytes())
+            SigningKey::from_pkcs8_encrypted_pem_file(path, password.as_slice())
         }
         result => result,
     }
@@ -366,9 +367,9 @@ fn load_signing_key(path: &Path, password_file: Option<&Path>) -> Result<Signing
 
 fn configured_signing_key_password(
     password_file: Option<&Path>,
-) -> Result<Option<Zeroizing<String>>, BundleError> {
+) -> Result<Option<Zeroizing<Vec<u8>>>, BundleError> {
     if let Some(path) = password_file {
-        let mut password = fs::read_to_string(path)
+        let mut password = fs::read(path)
             .map(Zeroizing::new)
             .map_err(|error| BundleError::Io {
                 path: path.to_path_buf(),
@@ -379,7 +380,7 @@ fn configured_signing_key_password(
     }
 
     match std::env::var(SIGNING_KEY_PASSWORD_ENV) {
-        Ok(password) => Ok(Some(Zeroizing::new(password))),
+        Ok(password) => Ok(Some(Zeroizing::new(password.into_bytes()))),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => Err(BundleError::Key(format!(
             "environment variable {SIGNING_KEY_PASSWORD_ENV} is not valid UTF-8"
@@ -387,10 +388,10 @@ fn configured_signing_key_password(
     }
 }
 
-fn trim_line_ending(value: &mut String) {
-    if value.ends_with('\n') {
+fn trim_line_ending(value: &mut Vec<u8>) {
+    if value.ends_with(b"\n") {
         value.pop();
-        if value.ends_with('\r') {
+        if value.ends_with(b"\r") {
             value.pop();
         }
     }

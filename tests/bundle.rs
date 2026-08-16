@@ -531,6 +531,7 @@ fn private_key_file_permissions_are_enforced() {
 fn encrypted_private_keys_require_and_accept_the_correct_password() {
     let dalek = ed25519_dalek::SigningKey::from_bytes(&[10; 32]);
     let encrypted = encrypted_pem(&dalek, b"correct horse", 1);
+    let encrypted = format!("Bag Attributes\n    friendlyName: signing-key\n{encrypted}");
 
     let error = SigningKey::from_pkcs8_pem(&encrypted).err().unwrap();
     assert!(matches!(error, BundleError::SigningKeyPasswordRequired));

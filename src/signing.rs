@@ -2,6 +2,7 @@ use crate::{BundleError, FORMAT_VERSION, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+use pkcs8::SecretDocument;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -10,7 +11,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 const SIGNATURE_DOMAIN: &[u8] = b"treetop-bundle-signature-v1\0";
-const ENCRYPTED_PRIVATE_KEY_LABEL: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----";
+const PRIVATE_KEY_LABEL: &str = "PRIVATE KEY";
+const ENCRYPTED_PRIVATE_KEY_LABEL: &str = "ENCRYPTED PRIVATE KEY";
 
 /// Signature requirements applied while opening an archive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +101,7 @@ impl SigningKey {
 
     /// Decode an unencrypted PKCS#8 PEM private key.
     pub fn from_pkcs8_pem(pem: &str) -> Result<Self> {
-        if is_encrypted_private_key(pem) {
+        if is_encrypted_private_key(pem)? {
             return Err(BundleError::SigningKeyPasswordRequired);
         }
         ed25519_dalek::SigningKey::from_pkcs8_pem(pem)
@@ -145,7 +147,7 @@ impl SigningKey {
     /// Decode either an encrypted or unencrypted PKCS#8 PEM private key,
     /// using the password when the PEM is encrypted.
     pub fn from_pkcs8_pem_with_password(pem: &str, password: impl AsRef<[u8]>) -> Result<Self> {
-        if is_encrypted_private_key(pem) {
+        if is_encrypted_private_key(pem)? {
             Self::from_pkcs8_encrypted_pem(pem, password)
         } else {
             Self::from_pkcs8_pem(pem)
@@ -273,8 +275,16 @@ fn key_id(key: &VerifyingKey) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn is_encrypted_private_key(pem: &str) -> bool {
-    pem.trim_start().starts_with(ENCRYPTED_PRIVATE_KEY_LABEL)
+fn is_encrypted_private_key(pem: &str) -> Result<bool> {
+    let (label, _) = SecretDocument::from_pem(pem)
+        .map_err(|error| BundleError::Key(format!("invalid PKCS#8 private key PEM: {error}")))?;
+    match label {
+        ENCRYPTED_PRIVATE_KEY_LABEL => Ok(true),
+        PRIVATE_KEY_LABEL => Ok(false),
+        _ => Err(BundleError::Key(format!(
+            "invalid PKCS#8 private key PEM label {label:?}"
+        ))),
+    }
 }
 
 fn read_private_key(path: &Path) -> Result<String> {
