@@ -52,8 +52,8 @@ treetop-bundle check policy FILE [--schema FILE] [--labels FILE]
 treetop-bundle check module TREETOP-MODULE.TOML
 treetop-bundle check bundle TREETOP-BUNDLE.TOML
 treetop-bundle check archive BUNDLE.TAR.GZ [--trusted-key PUBLIC.PEM]...
-treetop-bundle build --manifest TREETOP-BUNDLE.TOML --output BUNDLE.TAR.GZ [--signing-key PRIVATE.PEM]
-treetop-bundle sign BUNDLE.TAR.GZ --signing-key PRIVATE.PEM --output SIGNED.TAR.GZ
+treetop-bundle build --manifest TREETOP-BUNDLE.TOML --output BUNDLE.TAR.GZ [--signing-key PRIVATE.PEM] [--signing-key-password-file FILE]
+treetop-bundle sign BUNDLE.TAR.GZ --signing-key PRIVATE.PEM [--signing-key-password-file FILE] --output SIGNED.TAR.GZ
 ```
 
 Check and build commands accept `--format human|json` and `--deny-warnings`.
@@ -63,18 +63,32 @@ configuration, or key-loading failures.
 
 ## Signing keys
 
-Private keys must be unencrypted PKCS#8 PEM. On Unix, group or other access to a
-private-key file is rejected. Trusted public keys must be SPKI PEM. Generate a
-key pair using OpenSSL:
+Private keys must be PKCS#8 PEM and may be unencrypted or password-encrypted
+with PBES2. On Unix, group or other access to a private-key file is rejected.
+Trusted public keys must be SPKI PEM. Generate an encrypted key pair using
+OpenSSL:
 
 ```sh
-openssl genpkey -algorithm Ed25519 -out private.pem
+openssl genpkey -algorithm Ed25519 -aes-256-cbc -out private.pem
 chmod 600 private.pem
 openssl pkey -in private.pem -pubout -out public.pem
 ```
 
-Encrypted keys, key generation, Sigstore, multiple signatures, and live trust
-store reloads are intentionally outside version 1.
+For encrypted keys, `build` and `sign` read the password from
+`--signing-key-password-file` when supplied, then from the
+`TREETOP_BUNDLE_SIGNING_KEY_PASSWORD` environment variable, and otherwise
+prompt on the terminal without echoing. The file option takes precedence over
+the environment. Password files are read as raw bytes and may contain non-UTF-8
+values; a single trailing CRLF or LF is removed. Environment passwords must be
+valid UTF-8. Passwords cannot be supplied directly as command-line values.
+
+PBES2 decryption is enabled by the library's default `encrypted-keys` Cargo
+feature. Library consumers that only accept unencrypted keys can avoid the AES,
+PBKDF2, and scrypt dependency stack with `default-features = false`. The CLI
+keeps encrypted-key support enabled.
+
+Key generation, Sigstore, multiple signatures, and live trust store reloads
+are intentionally outside version 1.
 
 ## Distribution
 
@@ -90,12 +104,19 @@ Pull requests run deterministic Gungraun instruction-count benchmarks through
 the organization's reusable Rust benchmark workflow. Each hot path is a small,
 separate Cargo benchmark target so compilation is shared while execution fans
 out across jobs. The current probes independently measure strict label parsing
-and conversion of validated labels into runtime labelers.
+and conversion of validated labels into runtime labelers, plus unencrypted key
+loading, encrypted-key detection, and encrypted key loading.
 
-Run either probe locally with the matching runner:
+The signing-key probe uses a deterministic PBKDF2-SHA256/AES-256-CBC fixture
+with 2,048 iterations. It is a regression fixture, not a recommendation to
+weaken production KDF settings: encrypted-key load time is expected to be
+dominated by the work factor encoded in each key.
+
+Run any probe locally with the matching runner:
 
 ```sh
 cargo install gungraun-runner --version 0.19.4 --locked
 cargo bench --bench labels_parse_callgrind
 cargo bench --bench labels_to_labelers_callgrind
+cargo bench --bench signing_key_load_callgrind
 ```

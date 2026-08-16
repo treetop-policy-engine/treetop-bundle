@@ -1,3 +1,5 @@
+use ed25519_dalek::pkcs8::EncodePrivateKey;
+use pkcs8::{LineEnding, PrivateKeyInfo};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -97,11 +99,92 @@ fn build_emits_structured_content_errors_and_exit_one() {
     assert!(!output_path.exists());
 }
 
+#[test]
+fn signing_key_password_is_read_from_the_environment() {
+    let temporary = tempfile::tempdir().unwrap();
+    let key = encrypted_key_file(temporary.path(), b"vault secret");
+    let output_path = temporary.path().join("signed.tar.gz");
+
+    let output = run_with_env(
+        [
+            "sign",
+            "missing.tar.gz",
+            "--signing-key",
+            path(&key),
+            "--output",
+            path(&output_path),
+        ],
+        "TREETOP_BUNDLE_SIGNING_KEY_PASSWORD",
+        "vault secret",
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("filesystem error"));
+    assert!(!stderr(&output).contains("key error"));
+}
+
+#[test]
+fn non_utf8_password_file_takes_precedence_over_the_environment() {
+    let temporary = tempfile::tempdir().unwrap();
+    let password = [0xff, 0xfe, b'x'];
+    let key = encrypted_key_file(temporary.path(), &password);
+    let password_file = temporary.path().join("password");
+    fs::write(&password_file, [password.as_slice(), b"\r\n"].concat()).unwrap();
+    let output_path = temporary.path().join("signed.tar.gz");
+
+    let output = run_with_env(
+        [
+            "sign",
+            "missing.tar.gz",
+            "--signing-key",
+            path(&key),
+            "--signing-key-password-file",
+            path(&password_file),
+            "--output",
+            path(&output_path),
+        ],
+        "TREETOP_BUNDLE_SIGNING_KEY_PASSWORD",
+        "wrong environment secret",
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("filesystem error"));
+    assert!(!stderr(&output).contains("key error"));
+}
+
 fn run<const N: usize>(args: [&str; N]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_treetop-bundle"))
         .args(args)
         .output()
         .unwrap()
+}
+
+fn run_with_env<const N: usize>(args: [&str; N], name: &str, value: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_treetop-bundle"))
+        .args(args)
+        .env(name, value)
+        .output()
+        .unwrap()
+}
+
+fn encrypted_key_file(root: &Path, password: &[u8]) -> PathBuf {
+    let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+    let der = key.to_pkcs8_der().unwrap();
+    let private_key = PrivateKeyInfo::try_from(der.as_bytes()).unwrap();
+    let parameters =
+        pkcs8::pkcs5::pbes2::Parameters::pbkdf2_sha256_aes256cbc(2, &[3; 16], &[4; 16]).unwrap();
+    let pem = private_key
+        .encrypt_with_params(parameters, password)
+        .unwrap();
+    let pem = pem.to_pem("ENCRYPTED PRIVATE KEY", LineEnding::LF).unwrap();
+    let path = root.join("private.pem");
+    write(&path, &pem);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    path
 }
 
 fn path(path: &Path) -> &str {

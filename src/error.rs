@@ -24,6 +24,9 @@ pub enum BundleError {
     /// A key could not be loaded or decoded.
     #[error("key error: {0}")]
     Key(String),
+    /// An encrypted private key was provided without a password.
+    #[error("the signing key is encrypted and requires a password")]
+    SigningKeyPasswordRequired,
     /// Archive framing or structure is invalid.
     #[error("invalid bundle archive: {0}")]
     Archive(String),
