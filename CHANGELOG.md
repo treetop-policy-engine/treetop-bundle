@@ -2,32 +2,47 @@
 
 ## [Unreleased]
 
-- Publish native CLI archives for Linux musl on x86-64 and ARM64, macOS on
-  ARM64, and Windows on x86-64, with per-platform smoke tests and a shared
-  checksum manifest.
-- Compile large label rules as bounded `RegexSet`s while retaining a bounded
-  individual-regex fast path for small rules, enforce document-wide label
-  resource budgets, and benchmark each compilation and matching scenario
-  independently.
-- Stream tar data through gzip during archive encoding and decoding, avoid
-  artifact clones, and remove the redundant post-signing decompression pass.
-- Atomically create CLI output files, bound archive, private-key, and password
-  reads, zeroize private-key PEM buffers, and use one file handle for metadata
-  checks and reads.
-- Reject weak Ed25519 public keys and verify signatures with strict point
-  validation.
-- Replace quadratic namespace-overlap checks with sorted adjacent checks and
-  reuse parsed policies for aggregate validation.
-- Add independently fanned-out archive validation and re-signing regression
-  benchmarks, with one measured scenario per Cargo benchmark target.
+## [0.0.4] - 2026-08-16
+
+### Added
+
 - Accept password-encrypted PKCS#8 Ed25519 signing keys, with passwords read
   from a file, `TREETOP_BUNDLE_SIGNING_KEY_PASSWORD`, or a hidden terminal
   prompt.
-- Decode each signing-key PEM document once and cover the key-loading paths
-  with deterministic instruction-count regression benchmarks.
-- Keep encrypted-key support enabled by default while allowing library-only
-  users to omit its AES, PBKDF2, and scrypt dependencies with
+- Publish native CLI archives for Linux musl on x86-64 and ARM64, macOS on
+  ARM64, and Windows on x86-64, with per-platform smoke tests and a shared
+  checksum manifest.
+
+### Security
+
+- Reject weak Ed25519 public keys and verify signatures with strict point
+  validation.
+- Bound archive, private-key, and password reads; zeroize private-key and
+  password buffers; and enforce document-wide label and regex-program resource
+  budgets.
+
+### Changed
+
+- Make `treetop-bundle build` and `treetop-bundle sign` refuse to overwrite an
+  existing output path by using atomic create-new semantics.
+- Enable encrypted-key support by default while allowing library-only users to
+  omit its AES, PBKDF2, and scrypt dependencies with
   `default-features = false`.
+
+### Performance
+
+- Compile large label rules as bounded `RegexSet`s while retaining a bounded
+  individual-regex fast path for small rules.
+- Stream tar data through gzip during archive encoding and decoding, avoid
+  artifact clones, and remove the redundant post-signing decompression pass.
+- Replace quadratic namespace-overlap checks with sorted adjacent checks and
+  reuse parsed policies for aggregate validation.
+
+### Development
+
+- Expand deterministic Gungraun coverage for label compilation and matching,
+  archive validation and re-signing, and encrypted and unencrypted key loading,
+  with one independently gated scenario per benchmark target.
 
 ## [0.0.3] - 2026-08-15
 
