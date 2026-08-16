@@ -10,6 +10,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 const SIGNATURE_DOMAIN: &[u8] = b"treetop-bundle-signature-v1\0";
+const ENCRYPTED_PRIVATE_KEY_LABEL: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----";
 
 /// Signature requirements applied while opening an archive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,35 +85,71 @@ impl BundleSignature {
     }
 }
 
-/// An Ed25519 private signing key loaded from unencrypted PKCS#8 PEM.
+/// An Ed25519 private signing key loaded from PKCS#8 PEM.
 pub struct SigningKey(ed25519_dalek::SigningKey);
 
 impl SigningKey {
-    /// Load a private key and, on Unix, reject group/other-accessible files.
+    /// Load an unencrypted private key and, on Unix, reject
+    /// group/other-accessible files.
     pub fn from_pkcs8_pem_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let metadata = fs::metadata(path).map_err(|error| BundleError::io(path, error))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o077 != 0 {
-                return Err(BundleError::Key(format!(
-                    "private key file {} is accessible by group or others",
-                    path.display()
-                )));
-            }
-        }
-        let pem = fs::read_to_string(path).map_err(|error| BundleError::io(path, error))?;
+        let pem = read_private_key(path)?;
         Self::from_pkcs8_pem(&pem)
     }
 
     /// Decode an unencrypted PKCS#8 PEM private key.
     pub fn from_pkcs8_pem(pem: &str) -> Result<Self> {
+        if is_encrypted_private_key(pem) {
+            return Err(BundleError::SigningKeyPasswordRequired);
+        }
         ed25519_dalek::SigningKey::from_pkcs8_pem(pem)
             .map(Self)
             .map_err(|error| {
                 BundleError::Key(format!("invalid PKCS#8 Ed25519 private key: {error}"))
             })
+    }
+
+    /// Load a password-encrypted private key and, on Unix, reject
+    /// group/other-accessible files.
+    pub fn from_pkcs8_encrypted_pem_file(
+        path: impl AsRef<Path>,
+        password: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let path = path.as_ref();
+        let pem = read_private_key(path)?;
+        Self::from_pkcs8_encrypted_pem(&pem, password)
+    }
+
+    /// Load either an encrypted or unencrypted private key, using the password
+    /// when the PEM is encrypted.
+    pub fn from_pkcs8_pem_file_with_password(
+        path: impl AsRef<Path>,
+        password: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let path = path.as_ref();
+        let pem = read_private_key(path)?;
+        Self::from_pkcs8_pem_with_password(&pem, password)
+    }
+
+    /// Decode a password-encrypted PKCS#8 PEM private key.
+    pub fn from_pkcs8_encrypted_pem(pem: &str, password: impl AsRef<[u8]>) -> Result<Self> {
+        ed25519_dalek::SigningKey::from_pkcs8_encrypted_pem(pem, password)
+            .map(Self)
+            .map_err(|error| {
+                BundleError::Key(format!(
+                    "invalid encrypted PKCS#8 Ed25519 private key: {error}"
+                ))
+            })
+    }
+
+    /// Decode either an encrypted or unencrypted PKCS#8 PEM private key,
+    /// using the password when the PEM is encrypted.
+    pub fn from_pkcs8_pem_with_password(pem: &str, password: impl AsRef<[u8]>) -> Result<Self> {
+        if is_encrypted_private_key(pem) {
+            Self::from_pkcs8_encrypted_pem(pem, password)
+        } else {
+            Self::from_pkcs8_pem(pem)
+        }
     }
 
     pub fn key_id(&self) -> String {
@@ -234,4 +271,23 @@ impl TrustStore {
 fn key_id(key: &VerifyingKey) -> String {
     let digest = Sha256::digest(key.to_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn is_encrypted_private_key(pem: &str) -> bool {
+    pem.trim_start().starts_with(ENCRYPTED_PRIVATE_KEY_LABEL)
+}
+
+fn read_private_key(path: &Path) -> Result<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(path).map_err(|error| BundleError::io(path, error))?;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(BundleError::Key(format!(
+                "private key file {} is accessible by group or others",
+                path.display()
+            )));
+        }
+    }
+    fs::read_to_string(path).map_err(|error| BundleError::io(path, error))
 }

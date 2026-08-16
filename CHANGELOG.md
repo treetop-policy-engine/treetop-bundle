@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Accept password-encrypted PKCS#8 Ed25519 signing keys, with passwords read
+  from a file, `TREETOP_BUNDLE_SIGNING_KEY_PASSWORD`, or a hidden terminal
+  prompt.
+
 ## [0.0.3] - 2026-08-15
 
 - Reuse regex programs compiled during strict label validation when constructing runtime labelers, and avoid

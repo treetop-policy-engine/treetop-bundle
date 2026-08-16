@@ -2,6 +2,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::pkcs8::{EncodePrivateKey, EncodePublicKey};
 use flate2::bufread::GzDecoder;
 use flate2::{Compression, GzBuilder};
+use pkcs8::{LineEnding, PrivateKeyInfo};
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -526,6 +527,40 @@ fn private_key_file_permissions_are_enforced() {
     assert!(SigningKey::from_pkcs8_pem_file(&path).is_err());
 }
 
+#[test]
+fn encrypted_private_keys_require_and_accept_the_correct_password() {
+    let dalek = ed25519_dalek::SigningKey::from_bytes(&[10; 32]);
+    let encrypted = encrypted_pem(&dalek, b"correct horse", 1);
+
+    let error = SigningKey::from_pkcs8_pem(&encrypted).err().unwrap();
+    assert!(matches!(error, BundleError::SigningKeyPasswordRequired));
+
+    let loaded = SigningKey::from_pkcs8_pem_with_password(&encrypted, b"correct horse").unwrap();
+    assert_eq!(loaded.key_id(), key_id_for(&dalek));
+
+    let error = SigningKey::from_pkcs8_encrypted_pem(&encrypted, b"wrong")
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("invalid encrypted PKCS#8"));
+}
+
+#[test]
+fn encrypted_private_keys_can_be_loaded_from_a_file() {
+    let temporary = tempfile::tempdir().unwrap();
+    let dalek = ed25519_dalek::SigningKey::from_bytes(&[11; 32]);
+    let encrypted = encrypted_pem(&dalek, b"vault secret", 2);
+    let path = temporary.path().join("private.pem");
+    write(&path, &encrypted);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let loaded = SigningKey::from_pkcs8_pem_file_with_password(&path, b"vault secret").unwrap();
+    assert_eq!(loaded.key_id(), key_id_for(&dalek));
+}
+
 fn key_pair(seed: u8) -> (SigningKey, TrustedKey) {
     let dalek = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
     let private_pem = pem("PRIVATE KEY", dalek.to_pkcs8_der().unwrap().as_bytes());
@@ -535,6 +570,30 @@ fn key_pair(seed: u8) -> (SigningKey, TrustedKey) {
         SigningKey::from_pkcs8_pem(&private_pem).unwrap(),
         TrustedKey::from_spki_pem(&public_pem).unwrap(),
     )
+}
+
+fn key_id_for(key: &ed25519_dalek::SigningKey) -> String {
+    let public_der = key.verifying_key().to_public_key_der().unwrap();
+    let public_pem = pem("PUBLIC KEY", public_der.as_bytes());
+    TrustedKey::from_spki_pem(&public_pem)
+        .unwrap()
+        .key_id()
+        .to_string()
+}
+
+fn encrypted_pem(key: &ed25519_dalek::SigningKey, password: &[u8], seed: u8) -> String {
+    let der = key.to_pkcs8_der().unwrap();
+    let private_key = PrivateKeyInfo::try_from(der.as_bytes()).unwrap();
+    let salt = [seed; 16];
+    let iv = [seed.wrapping_add(1); 16];
+    let parameters =
+        pkcs8::pkcs5::pbes2::Parameters::pbkdf2_sha256_aes256cbc(2, &salt, &iv).unwrap();
+    private_key
+        .encrypt_with_params(parameters, password)
+        .unwrap()
+        .to_pem("ENCRYPTED PRIVATE KEY", LineEnding::LF)
+        .unwrap()
+        .to_string()
 }
 
 fn pem(label: &str, der: &[u8]) -> String {

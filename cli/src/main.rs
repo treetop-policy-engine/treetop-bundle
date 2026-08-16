@@ -7,6 +7,9 @@ use treetop_bundle::{
     ArchiveLimits, BundleArchive, BundleBuilder, BundleError, Diagnostic, DiagnosticSeverity,
     SignaturePolicy, SigningKey, TrustStore, TrustedKey, check_module, check_policy,
 };
+use zeroize::Zeroizing;
+
+const SIGNING_KEY_PASSWORD_ENV: &str = "TREETOP_BUNDLE_SIGNING_KEY_PASSWORD";
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Compile, validate, and sign Treetop policy bundles")]
@@ -109,6 +112,10 @@ struct BuildArgs {
     output: PathBuf,
     #[arg(long)]
     signing_key: Option<PathBuf>,
+    /// Read the signing-key password from a file; otherwise use
+    /// TREETOP_BUNDLE_SIGNING_KEY_PASSWORD or prompt on the terminal.
+    #[arg(long, value_name = "FILE", requires = "signing_key")]
+    signing_key_password_file: Option<PathBuf>,
     #[arg(long, value_enum, default_value = "human")]
     format: OutputFormat,
     #[arg(long)]
@@ -120,6 +127,10 @@ struct SignArgs {
     archive: PathBuf,
     #[arg(long)]
     signing_key: PathBuf,
+    /// Read the signing-key password from a file; otherwise use
+    /// TREETOP_BUNDLE_SIGNING_KEY_PASSWORD or prompt on the terminal.
+    #[arg(long, value_name = "FILE")]
+    signing_key_password_file: Option<PathBuf>,
     #[arg(long)]
     output: PathBuf,
 }
@@ -229,7 +240,7 @@ fn run_build(args: BuildArgs) -> Result<(), BundleError> {
     let signing_key = args
         .signing_key
         .as_deref()
-        .map(SigningKey::from_pkcs8_pem_file)
+        .map(|path| load_signing_key(path, args.signing_key_password_file.as_deref()))
         .transpose()?;
     let common = CommonCheckArgs {
         format: args.format,
@@ -263,7 +274,7 @@ fn run_build(args: BuildArgs) -> Result<(), BundleError> {
 
 fn run_sign(args: SignArgs) -> Result<(), BundleError> {
     refuse_overwrite(&args.output)?;
-    let key = SigningKey::from_pkcs8_pem_file(&args.signing_key)?;
+    let key = load_signing_key(&args.signing_key, args.signing_key_password_file.as_deref())?;
     let archive = BundleArchive::read(&args.archive, ArchiveLimits::DEFAULT_MAX_COMPRESSED_BYTES)?;
     let signed = archive.resign(&key, ArchiveLimits::default())?;
     fs::write(&args.output, signed.as_bytes()).map_err(|error| BundleError::Io {
@@ -333,6 +344,56 @@ fn read_string(path: &Path) -> Result<String, BundleError> {
         path: path.to_path_buf(),
         source: error,
     })
+}
+
+fn load_signing_key(path: &Path, password_file: Option<&Path>) -> Result<SigningKey, BundleError> {
+    if let Some(password) = configured_signing_key_password(password_file)? {
+        return SigningKey::from_pkcs8_pem_file_with_password(path, password.as_bytes());
+    }
+
+    match SigningKey::from_pkcs8_pem_file(path) {
+        Err(BundleError::SigningKeyPasswordRequired) => {
+            let password = rpassword::prompt_password("Signing key password: ")
+                .map(Zeroizing::new)
+                .map_err(|error| {
+                    BundleError::Key(format!("failed to read signing-key password: {error}"))
+                })?;
+            SigningKey::from_pkcs8_encrypted_pem_file(path, password.as_bytes())
+        }
+        result => result,
+    }
+}
+
+fn configured_signing_key_password(
+    password_file: Option<&Path>,
+) -> Result<Option<Zeroizing<String>>, BundleError> {
+    if let Some(path) = password_file {
+        let mut password = fs::read_to_string(path)
+            .map(Zeroizing::new)
+            .map_err(|error| BundleError::Io {
+                path: path.to_path_buf(),
+                source: error,
+            })?;
+        trim_line_ending(&mut password);
+        return Ok(Some(password));
+    }
+
+    match std::env::var(SIGNING_KEY_PASSWORD_ENV) {
+        Ok(password) => Ok(Some(Zeroizing::new(password))),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(BundleError::Key(format!(
+            "environment variable {SIGNING_KEY_PASSWORD_ENV} is not valid UTF-8"
+        ))),
+    }
+}
+
+fn trim_line_ending(value: &mut String) {
+    if value.ends_with('\n') {
+        value.pop();
+        if value.ends_with('\r') {
+            value.pop();
+        }
+    }
 }
 
 fn refuse_overwrite(path: &Path) -> Result<(), BundleError> {
