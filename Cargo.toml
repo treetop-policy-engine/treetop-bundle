@@ -1,6 +1,6 @@
 [package]
 name = "treetop-bundle"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 rust-version = "1.93.1"
 license = "MIT"
@@ -30,24 +30,24 @@ default = ["encrypted-keys"]
 encrypted-keys = ["dep:pkcs8"]
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 cedar-policy = "=4.12.0"
-ed25519-dalek = { version = "2.2.0", features = ["pem", "pkcs8"] }
-flate2 = "1.1.2"
-pkcs8 = { version = "0.10.2", features = ["encryption"], optional = true }
-regex = "1.12.2"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
-sha2 = "0.10.9"
-tar = "0.4.44"
-thiserror = "2.0.16"
-toml = "0.9.5"
-treetop-core = "=0.0.21"
+ed25519-dalek = { version = "3.0.0", features = ["pem", "pkcs8"] }
+flate2 = "1.1.9"
+pkcs8 = { version = "0.11.0", features = ["encryption"], optional = true }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tar = "0.4.46"
+thiserror = "2.0.20"
+toml = "1.1.4"
+treetop-core = "=0.0.22"
 zeroize = "1.9.0"
 
 [dev-dependencies]
 gungraun = "0.19.4"
-tempfile = "3.21.0"
+tempfile = "3.27.0"
 
 [[bench]]
 name = "labels_parse_callgrind"

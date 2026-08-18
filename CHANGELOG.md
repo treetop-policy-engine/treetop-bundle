@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-08-18
+
+### Changed
+
+- Update `treetop-core` to 0.0.22 and refresh all direct and transitive
+  dependencies to their latest stable releases.
+
 ## [0.0.4] - 2026-08-16
 
 ### Added

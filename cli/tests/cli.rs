@@ -1,5 +1,5 @@
 use ed25519_dalek::pkcs8::EncodePrivateKey;
-use pkcs8::{LineEnding, PrivateKeyInfo};
+use pkcs8::{LineEnding, PrivateKeyInfoRef};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -170,9 +170,10 @@ fn run_with_env<const N: usize>(args: [&str; N], name: &str, value: &str) -> Out
 fn encrypted_key_file(root: &Path, password: &[u8]) -> PathBuf {
     let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
     let der = key.to_pkcs8_der().unwrap();
-    let private_key = PrivateKeyInfo::try_from(der.as_bytes()).unwrap();
+    let private_key = PrivateKeyInfoRef::try_from(der.as_bytes()).unwrap();
     let parameters =
-        pkcs8::pkcs5::pbes2::Parameters::pbkdf2_sha256_aes256cbc(2, &[3; 16], &[4; 16]).unwrap();
+        pkcs8::pkcs5::pbes2::Parameters::generate_pbkdf2_sha256_aes256cbc(2, &[3; 16], [4; 16])
+            .unwrap();
     let pem = private_key
         .encrypt_with_params(parameters, password)
         .unwrap();

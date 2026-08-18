@@ -3,7 +3,7 @@ use ed25519_dalek::pkcs8::{EncodePrivateKey, EncodePublicKey};
 use flate2::bufread::GzDecoder;
 use flate2::{Compression, GzBuilder};
 #[cfg(feature = "encrypted-keys")]
-use pkcs8::{LineEnding, PrivateKeyInfo};
+use pkcs8::{LineEnding, PrivateKeyInfoRef};
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -633,11 +633,11 @@ fn key_id_for(key: &ed25519_dalek::SigningKey) -> String {
 #[cfg(feature = "encrypted-keys")]
 fn encrypted_pem(key: &ed25519_dalek::SigningKey, password: &[u8], seed: u8) -> String {
     let der = key.to_pkcs8_der().unwrap();
-    let private_key = PrivateKeyInfo::try_from(der.as_bytes()).unwrap();
+    let private_key = PrivateKeyInfoRef::try_from(der.as_bytes()).unwrap();
     let salt = [seed; 16];
     let iv = [seed.wrapping_add(1); 16];
     let parameters =
-        pkcs8::pkcs5::pbes2::Parameters::pbkdf2_sha256_aes256cbc(2, &salt, &iv).unwrap();
+        pkcs8::pkcs5::pbes2::Parameters::generate_pbkdf2_sha256_aes256cbc(2, &salt, iv).unwrap();
     private_key
         .encrypt_with_params(parameters, password)
         .unwrap()
