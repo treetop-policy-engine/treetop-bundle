@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add opt-in namespace-partitioned engine preparation from signed bundle module
+  boundaries while preserving the existing monolithic preparation method.
+
+### Changed
+
+- Update the exact `treetop-core` dependency and archive generator metadata to
+  0.0.23.
+
 ## [0.0.5] - 2026-08-18
 
 ### Changed

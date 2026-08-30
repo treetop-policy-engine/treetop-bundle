@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Component, Path};
 use tar::{Archive, Builder, EntryType, Header};
-use treetop_core::{LabelRegistryBuilder, PolicyEngine};
+use treetop_core::{LabelRegistryBuilder, PolicyEngine, PolicyStoreConfig, PolicyStoreLayout};
 
 const MANIFEST_PATH: &str = "manifest.json";
 const SIGNATURE_PATH: &str = "signature.json";
@@ -198,8 +198,44 @@ impl ValidatedBundle {
 
     /// Build a complete engine without modifying any application state.
     pub fn prepare_engine(&self) -> Result<PolicyEngine> {
-        let mut engine = match &self.schema_json {
-            Some(schema) => {
+        self.prepare_engine_with_layout(None)
+    }
+
+    /// Build a namespace-partitioned engine from the bundle's module boundaries.
+    ///
+    /// Each ordinary module becomes one policy store identified by its module
+    /// name and rooted at its declared namespace. Policies from modules with the
+    /// global role are installed in every store. Preparation fails if the
+    /// module boundaries are not valid independent stores, including when an
+    /// ordinary policy references another ordinary module's namespace.
+    ///
+    /// [`Self::prepare_engine`] remains the backward-compatible monolithic path.
+    pub fn prepare_engine_with_policy_stores(&self) -> Result<PolicyEngine> {
+        let stores = self
+            .modules
+            .iter()
+            .filter(|module| module.role == crate::ModuleRole::Ordinary)
+            .map(|module| PolicyStoreConfig::new(&module.name, &module.namespace))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(policy_engine_error)?;
+        let global_policy_ids = self
+            .modules
+            .iter()
+            .filter(|module| module.role == crate::ModuleRole::Global)
+            .flat_map(|module| module.policy_ids.iter());
+        let layout = PolicyStoreLayout::new(stores)
+            .and_then(|layout| layout.with_global_policy_ids(global_policy_ids))
+            .map_err(policy_engine_error)?;
+
+        self.prepare_engine_with_layout(Some(layout))
+    }
+
+    fn prepare_engine_with_layout(
+        &self,
+        layout: Option<PolicyStoreLayout>,
+    ) -> Result<PolicyEngine> {
+        let mut engine = match (&self.schema_json, layout) {
+            (Some(schema), layout) => {
                 let schema =
                     cedar_policy::Schema::from_json_value(schema.clone()).map_err(|error| {
                         BundleError::Validation(vec![Diagnostic::error(
@@ -207,19 +243,23 @@ impl ValidatedBundle {
                             error.to_string(),
                         )])
                     })?;
-                PolicyEngine::new_from_str_with_schema(&self.policies, schema).map_err(|error| {
-                    BundleError::Validation(vec![Diagnostic::error(
-                        "policy.engine_prepare",
-                        error.to_string(),
-                    )])
-                })?
+                match layout {
+                    Some(layout) => PolicyEngine::new_from_str_with_schema_and_policy_stores(
+                        &self.policies,
+                        schema,
+                        layout,
+                    ),
+                    None => PolicyEngine::new_from_str_with_schema(&self.policies, schema),
+                }
+                .map_err(policy_engine_error)?
             }
-            None => PolicyEngine::new_from_str(&self.policies).map_err(|error| {
-                BundleError::Validation(vec![Diagnostic::error(
-                    "policy.engine_prepare",
-                    error.to_string(),
-                )])
-            })?,
+            (None, Some(layout)) => {
+                PolicyEngine::new_from_str_with_policy_stores(&self.policies, layout)
+                    .map_err(policy_engine_error)?
+            }
+            (None, None) => {
+                PolicyEngine::new_from_str(&self.policies).map_err(policy_engine_error)?
+            }
         };
         let labelers = self.labels.to_labelers();
         if !labelers.is_empty() {
@@ -231,6 +271,13 @@ impl ValidatedBundle {
         }
         Ok(engine)
     }
+}
+
+fn policy_engine_error(error: impl ToString) -> BundleError {
+    BundleError::Validation(vec![Diagnostic::error(
+        "policy.engine_prepare",
+        error.to_string(),
+    )])
 }
 
 /// An in-memory gzip-compressed Treetop bundle archive.

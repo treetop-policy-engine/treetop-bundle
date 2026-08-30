@@ -13,6 +13,7 @@ use treetop_bundle::{
     ArchiveLimits, BundleArchive, BundleBuilder, BundleError, BundleManifest, LabelSet,
     SignaturePolicy, SigningKey, TrustStore, TrustedKey,
 };
+use treetop_core::{Action, Decision, Principal, Request, Resource, User};
 
 struct Fixture {
     _temporary: TempDir,
@@ -110,6 +111,10 @@ fn builds_byte_identical_archives() {
     assert_eq!(validated.name(), "production");
     assert_eq!(validated.policy_ids(), &["dns.read"]);
     validated.prepare_engine().unwrap();
+    let scoped = validated.prepare_engine_with_policy_stores().unwrap();
+    let store_ids = scoped.policy_store_ids().unwrap();
+    assert_eq!(store_ids.len(), 1);
+    assert_eq!(store_ids[0].as_str(), "dns");
 }
 
 #[test]
@@ -308,6 +313,123 @@ role = "global"
         .unwrap()
         .build(None)
         .unwrap();
+}
+
+#[test]
+fn scoped_preparation_maps_ordinary_modules_and_global_policies() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    write(
+        root.join("dns.cedar"),
+        r#"
+@id("dns.read")
+permit (
+    principal,
+    action == ExampleCo::DNS::Action::"read",
+    resource is ExampleCo::DNS::Host
+);
+"#,
+    );
+    write(
+        root.join("dns-module.toml"),
+        r#"
+format_version = 1
+name = "dns"
+namespace = "ExampleCo::DNS"
+policies = ["dns.cedar"]
+"#,
+    );
+    write(
+        root.join("www.cedar"),
+        r#"
+@id("www.read")
+permit (
+    principal,
+    action == ExampleCo::WWW::Action::"read",
+    resource is ExampleCo::WWW::Page
+);
+"#,
+    );
+    write(
+        root.join("www-module.toml"),
+        r#"
+format_version = 1
+name = "www"
+namespace = "ExampleCo::WWW"
+policies = ["www.cedar"]
+"#,
+    );
+    write(
+        root.join("global.cedar"),
+        r#"
+@id("platform.blocked")
+forbid (
+    principal == Organization::User::"blocked",
+    action,
+    resource
+);
+"#,
+    );
+    write(
+        root.join("global-module.toml"),
+        r#"
+format_version = 1
+name = "platform"
+namespace = "ExampleCo::Platform"
+policies = ["global.cedar"]
+"#,
+    );
+    let manifest = root.join("treetop-bundle.toml");
+    write(
+        &manifest,
+        r#"
+format_version = 1
+name = "scoped"
+
+[[modules]]
+manifest = "dns-module.toml"
+
+[[modules]]
+manifest = "www-module.toml"
+
+[[modules]]
+manifest = "global-module.toml"
+role = "global"
+"#,
+    );
+
+    let archive = BundleBuilder::from_manifest(manifest)
+        .unwrap()
+        .build(None)
+        .unwrap();
+    let validated = archive
+        .validate(
+            SignaturePolicy::AllowUnsigned,
+            &TrustStore::new(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
+    let engine = validated.prepare_engine_with_policy_stores().unwrap();
+    let store_ids = engine.policy_store_ids().unwrap();
+    assert_eq!(store_ids[0].as_str(), "dns");
+    assert_eq!(store_ids[1].as_str(), "www");
+
+    let request = Request {
+        principal: Principal::User(User::new(
+            "blocked",
+            None,
+            Some(vec!["Organization".to_string()]),
+        )),
+        action: Action::new(
+            "read",
+            Some(vec!["ExampleCo".to_string(), "DNS".to_string()]),
+        ),
+        resource: Resource::new("ExampleCo::DNS::Host", "host-1"),
+    };
+    assert!(matches!(
+        engine.evaluate(&request).unwrap(),
+        Decision::Deny { .. }
+    ));
 }
 
 #[test]
