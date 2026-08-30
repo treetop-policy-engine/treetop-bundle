@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-08-30
+
 ### Added
 
 - Add opt-in namespace-partitioned engine preparation from signed bundle module
