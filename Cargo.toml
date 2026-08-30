@@ -79,6 +79,10 @@ harness = false
 required-features = ["encrypted-keys"]
 
 [[bench]]
+name = "prepare_policy_stores_callgrind"
+harness = false
+
+[[bench]]
 name = "signing_key_load_unencrypted_callgrind"
 harness = false
 required-features = ["encrypted-keys"]
