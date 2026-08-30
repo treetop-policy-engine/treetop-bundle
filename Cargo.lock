@@ -2168,9 +2168,9 @@ dependencies = [
 
 [[package]]
 name = "treetop-core"
-version = "0.0.22"
+version = "0.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90e509823778c078c04d39c7c8b2ebf06d8ca13c6bd3124799b900c7969b1178"
+checksum = "476c281a84f87636ab292752f1b563c144412d7b998744c3028a60e2692523a4"
 dependencies = [
  "arc-swap",
  "cedar-policy",

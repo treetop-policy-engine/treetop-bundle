@@ -42,7 +42,7 @@ sha2 = "0.11.0"
 tar = "0.4.46"
 thiserror = "2.0.20"
 toml = "1.1.4"
-treetop-core = "=0.0.22"
+treetop-core = "=0.0.23"
 zeroize = "1.9.0"
 
 [dev-dependencies]
@@ -77,6 +77,10 @@ harness = false
 name = "archive_resign_callgrind"
 harness = false
 required-features = ["encrypted-keys"]
+
+[[bench]]
+name = "prepare_policy_stores_callgrind"
+harness = false
 
 [[bench]]
 name = "signing_key_load_unencrypted_callgrind"

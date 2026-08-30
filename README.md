@@ -45,6 +45,14 @@ symlink escapes are rejected. Bundle output is a canonical gzip-compressed tar
 containing `manifest.json`, an optional `signature.json`, `policies.cedar`, an
 optional `schema.json`, and `labels.json` in that exact order.
 
+Validated archives can be prepared as either a backward-compatible monolithic
+policy engine with `ValidatedBundle::prepare_engine()` or an opt-in
+namespace-partitioned engine with
+`ValidatedBundle::prepare_engine_with_policy_stores()`. In the partitioned
+form, each ordinary module is a store and global-module policies are installed
+in every store. Ordinary modules must be independent: a policy that references
+another ordinary module's namespace makes scoped preparation fail closed.
+
 Label patterns in each rule are compiled into one `RegexSet`, so all patterns
 are evaluated in a single search. To keep untrusted label documents within a
 predictable resource budget, a document may contain at most 256 rules, 1,024
