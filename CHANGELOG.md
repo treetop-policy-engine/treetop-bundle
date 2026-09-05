@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-09-05
+
 ### Changed
 
 - **BREAKING**: Upgrade Core to 0.0.25. Engine preparation now returns
