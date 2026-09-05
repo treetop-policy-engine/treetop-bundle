@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: Upgrade Core to 0.0.24. Engine preparation now returns
+  `PreparedEngine`, with explicit schema-free and schema-enforcing variants.
+  Use its common evaluation methods or match a variant for mode-specific Core
+  operations. `PreparedEvaluationSession` captures one generation for batches.
+  Rebuild and re-sign archives with the matching upgraded CLI; the existing
+  exact generator-version checks also cover the new Core version.
+- Validate label output configuration when parsing bundles. Rules on different
+  resource kinds may continue sharing an output; one runtime labeler now owns
+  that output and dispatches by kind. Label derivation is read-only, and Core
+  controls replacement/removal of caller-provided values. Invalid and reserved
+  outputs fail before a validated `LabelSet` can be constructed.
+- Cache validated runtime labelers at parsing time so `to_labelers` remains
+  infallible and does not rebuild compiled regex labelers.
+- Identify installed label configurations with a SHA-256 digest of the
+  canonical label JSON in `PolicyVersion.label_set`, stable across engine
+  preparation and both store layouts.
+
 ## [0.0.6] - 2026-08-30
 
 ### Added

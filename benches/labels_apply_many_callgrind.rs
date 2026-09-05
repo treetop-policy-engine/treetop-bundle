@@ -1,3 +1,4 @@
+use treetop_core::LabelerApply;
 mod support;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};

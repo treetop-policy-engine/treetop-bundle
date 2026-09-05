@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
-use treetop_core::{AttrValue, Labeler, RegexLabeler, Resource};
+use treetop_core::{AttrValue, LabelRegistryBuilder, Labeler, RegexLabeler, Resource};
 
 const MAX_LABEL_RULES: usize = 256;
 const MAX_PATTERNS_PER_RULE: usize = 1_024;
@@ -61,20 +61,31 @@ struct RawLabelRule {
 }
 
 /// A validated label rule.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct LabelRule {
     kind: String,
     field: String,
     output: String,
     patterns: Vec<LabelPattern>,
     #[serde(skip)]
-    compiled: CompiledPatterns,
+    runtime: Arc<dyn Labeler>,
 }
 
 #[derive(Debug, Clone)]
 enum CompiledPatterns {
     Individual(Arc<Vec<Regex>>),
     Set(Arc<RegexSet>),
+}
+
+impl std::fmt::Debug for LabelRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LabelRule")
+            .field("kind", &self.kind)
+            .field("field", &self.field)
+            .field("output", &self.output)
+            .field("patterns", &self.patterns)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PartialEq for LabelRule {
@@ -102,10 +113,13 @@ impl Labeler for RegexSetLabeler {
         self.kind == kind
     }
 
-    fn apply(&self, resource: &mut Resource) {
+    fn output(&self) -> &str {
+        &self.output
+    }
+
+    fn derive(&self, resource: &Resource) -> Option<AttrValue> {
         let Some(AttrValue::String(value)) = resource.attributes().get(&self.field) else {
-            resource.attrs().remove(&self.output);
-            return;
+            return None;
         };
         let labels = self
             .compiled
@@ -113,9 +127,30 @@ impl Labeler for RegexSetLabeler {
             .iter()
             .map(|index| AttrValue::String(self.names[index].clone()))
             .collect();
-        resource
-            .attrs()
-            .insert(self.output.clone(), AttrValue::Set(labels));
+        Some(AttrValue::Set(labels))
+    }
+}
+
+/// One output owner dispatching among rules for disjoint resource kinds.
+struct OutputLabeler {
+    output: String,
+    rules: Vec<(String, Arc<dyn Labeler>)>,
+}
+
+impl Labeler for OutputLabeler {
+    fn applies_to(&self, kind: &str) -> bool {
+        self.rules.iter().any(|(rule_kind, _)| rule_kind == kind)
+    }
+
+    fn output(&self) -> &str {
+        &self.output
+    }
+
+    fn derive(&self, resource: &Resource) -> Option<AttrValue> {
+        self.rules
+            .iter()
+            .find(|(kind, _)| kind == resource.kind())
+            .and_then(|(_, rule)| rule.derive(resource))
     }
 }
 
@@ -280,13 +315,25 @@ impl LabelSet {
 
             if patterns_valid {
                 match compile_patterns(&patterns) {
-                    Ok(compiled) => rules.push(LabelRule {
-                        kind: raw_rule.kind,
-                        field: raw_rule.field,
-                        output: raw_rule.output,
-                        patterns,
+                    Ok(compiled) => match runtime_labeler(
+                        &raw_rule.kind,
+                        &raw_rule.field,
+                        &raw_rule.output,
+                        &patterns,
                         compiled,
-                    }),
+                    ) {
+                        Ok(runtime) => rules.push(LabelRule {
+                            kind: raw_rule.kind,
+                            field: raw_rule.field,
+                            output: raw_rule.output,
+                            patterns,
+                            runtime,
+                        }),
+                        Err(error) => diagnostics.push(Diagnostic::error(
+                            "labels.invalid_configuration",
+                            format!("{location}: {error}"),
+                        )),
+                    },
                     Err(error) => diagnostics.push(Diagnostic::error(
                         "labels.invalid_regex",
                         format!("{location}.patterns cannot be compiled safely: {error}"),
@@ -333,38 +380,32 @@ impl LabelSet {
         self.0.is_empty()
     }
 
-    /// Convert this validated set into bounded runtime regex labelers.
+    /// Convert validated rules into one runtime owner per output attribute.
+    ///
+    /// Rules for different resource kinds may share an output. They are grouped
+    /// under one owner, in first-output appearance order. Regex compilation and
+    /// output validation have already completed at the input boundary.
     pub fn to_labelers(&self) -> Vec<Arc<dyn Labeler>> {
-        self.0
-            .iter()
-            .map(|rule| match &rule.compiled {
-                CompiledPatterns::Individual(compiled) => {
-                    let patterns = rule
-                        .patterns
-                        .iter()
-                        .zip(compiled.iter())
-                        .map(|(pattern, regex)| (pattern.name.clone(), regex.clone()))
-                        .collect();
-                    Arc::new(RegexLabeler::new(
-                        rule.kind.clone(),
-                        rule.field.clone(),
-                        rule.output.clone(),
-                        patterns,
-                    )) as Arc<dyn Labeler>
-                }
-                CompiledPatterns::Set(compiled) => {
-                    let names = rule
-                        .patterns
-                        .iter()
-                        .map(|pattern| pattern.name.clone())
-                        .collect();
-                    Arc::new(RegexSetLabeler {
-                        kind: rule.kind.clone(),
-                        field: rule.field.clone(),
-                        output: rule.output.clone(),
-                        names,
-                        compiled: Arc::clone(compiled),
-                    }) as Arc<dyn Labeler>
+        let mut groups: Vec<OutputLabeler> = Vec::new();
+        for rule in &self.0 {
+            if let Some(group) = groups.iter_mut().find(|group| group.output == rule.output) {
+                group
+                    .rules
+                    .push((rule.kind.clone(), Arc::clone(&rule.runtime)));
+            } else {
+                groups.push(OutputLabeler {
+                    output: rule.output.clone(),
+                    rules: vec![(rule.kind.clone(), Arc::clone(&rule.runtime))],
+                });
+            }
+        }
+        groups
+            .into_iter()
+            .map(|mut group| {
+                if group.rules.len() == 1 {
+                    group.rules.remove(0).1
+                } else {
+                    Arc::new(group) as Arc<dyn Labeler>
                 }
             })
             .collect()
@@ -425,6 +466,42 @@ impl LabelSet {
         }
         diagnostics
     }
+}
+
+fn runtime_labeler(
+    kind: &str,
+    field: &str,
+    output: &str,
+    patterns: &[LabelPattern],
+    compiled: CompiledPatterns,
+) -> std::result::Result<Arc<dyn Labeler>, treetop_core::PolicyError> {
+    let labeler: Arc<dyn Labeler> = match compiled {
+        CompiledPatterns::Individual(compiled) => Arc::new(RegexLabeler::new(
+            kind,
+            field,
+            output,
+            patterns
+                .iter()
+                .zip(compiled.iter())
+                .map(|(pattern, regex)| (pattern.name.clone(), regex.clone()))
+                .collect(),
+        )?),
+        CompiledPatterns::Set(compiled) => Arc::new(RegexSetLabeler {
+            kind: kind.to_string(),
+            field: field.to_string(),
+            output: output.to_string(),
+            names: patterns
+                .iter()
+                .map(|pattern| pattern.name.clone())
+                .collect(),
+            compiled,
+        }),
+    };
+    // Use Core's constructor for the same output validation on both backends.
+    LabelRegistryBuilder::new()
+        .add_labeler(Arc::clone(&labeler))
+        .build()?;
+    Ok(labeler)
 }
 
 fn compile_patterns(
@@ -584,6 +661,106 @@ fn is_string_set_type(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use treetop_core::LabelerApply;
+
+    fn shared_output_rules() -> LabelSet {
+        LabelSet::from_json_str(r#"[
+            {"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"host","regex":"prod"}]},
+            {"kind":"App::Bucket","field":"name","output":"labels","patterns":[{"name":"bucket","regex":"prod"}]}
+        ]"#).unwrap()
+    }
+
+    #[test]
+    fn shared_outputs_dispatch_by_kind_and_replace_forged_labels() {
+        let labelers = shared_output_rules().to_labelers();
+        assert_eq!(labelers.len(), 1);
+        let registry = LabelRegistryBuilder::new()
+            .add_labeler(Arc::clone(&labelers[0]))
+            .build()
+            .unwrap();
+        for (kind, expected) in [("App::Host", "host"), ("App::Bucket", "bucket")] {
+            let mut resource = Resource::new(kind, "one")
+                .unwrap()
+                .with_attr("name", AttrValue::String("prod".into()))
+                .with_attr("labels", AttrValue::String("forged".into()));
+            registry.apply(&mut resource);
+            assert_eq!(
+                resource.attributes().get("labels"),
+                Some(&AttrValue::Set(vec![AttrValue::String(expected.into())]))
+            );
+            let once = resource.clone();
+            registry.apply(&mut resource);
+            assert_eq!(resource, once);
+        }
+    }
+
+    #[test]
+    fn shared_output_sanitizes_skipped_kinds_and_missing_inputs() {
+        let labeler = shared_output_rules().to_labelers().remove(0);
+        let registry = LabelRegistryBuilder::new()
+            .add_labeler(labeler)
+            .build()
+            .unwrap();
+        for kind in ["App::Other", "App::Host", "App::Bucket"] {
+            let mut resource = Resource::new(kind, "one")
+                .unwrap()
+                .with_attr("labels", AttrValue::String("forged".into()));
+            registry.apply(&mut resource);
+            assert!(!resource.attributes().contains_key("labels"));
+        }
+    }
+
+    #[test]
+    fn shared_output_preserves_empty_match_set() {
+        let labeler = shared_output_rules().to_labelers().remove(0);
+        let mut resource = Resource::new("App::Host", "one")
+            .unwrap()
+            .with_attr("name", AttrValue::String("development".into()));
+        labeler.apply(&mut resource);
+        assert_eq!(
+            resource.attributes().get("labels"),
+            Some(&AttrValue::Set(vec![]))
+        );
+    }
+
+    #[test]
+    fn combined_label_documents_share_one_owner_but_reject_same_kind() {
+        let labels = shared_output_rules();
+        let first = LabelSet(vec![labels.0[0].clone()]);
+        let second = LabelSet(vec![labels.0[1].clone()]);
+        assert_eq!(
+            LabelSet::combine([first.clone(), second])
+                .unwrap()
+                .to_labelers()
+                .len(),
+            1
+        );
+        assert!(LabelSet::combine([first.clone(), first]).is_err());
+    }
+
+    #[test]
+    fn both_regex_backends_reject_reserved_output_at_parse_boundary() {
+        for count in [1, 5] {
+            let patterns: Vec<_> = (0..count)
+                .map(|i| {
+                    serde_json::json!({
+                        "name": format!("label-{i}"), "regex": "prod",
+                    })
+                })
+                .collect();
+            let source = serde_json::json!([{
+                "kind":"App::Host", "field":"name", "output":"id", "patterns":patterns,
+            }])
+            .to_string();
+            let error = LabelSet::from_json_str(&source).unwrap_err();
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|d| d.code == "labels.invalid_configuration")
+            );
+        }
+    }
 
     #[test]
     fn strict_label_validation_rejects_unknown_fields() {
@@ -611,6 +788,7 @@ mod tests {
         .unwrap();
         let labeler = labels.to_labelers().pop().unwrap();
         let mut resource = Resource::new("App::Host", "one")
+            .unwrap()
             .with_attr("name", AttrValue::String("prod-db".to_string()))
             .with_attr(
                 "labels",

@@ -59,6 +59,21 @@ pub fn apply_many_fixture() -> ApplyFixture {
     ApplyFixture {
         labeler: labels.to_labelers().pop().unwrap(),
         resource: Resource::new("Example::Host", "benchmark")
+            .unwrap()
             .with_attr("name", AttrValue::String("host-1023".to_string())),
+    }
+}
+
+pub fn apply_shared_output_fixture() -> ApplyFixture {
+    let labels =
+        LabelSet::from_json_str(&LABELS_JSON.replace("\"classifications\"", "\"labels\"")).unwrap();
+    ApplyFixture {
+        labeler: labels.to_labelers().pop().unwrap(),
+        resource: Resource::new("Example::Document", "benchmark")
+            .unwrap()
+            .with_attr(
+                "path",
+                AttrValue::String("finance/confidential".to_string()),
+            ),
     }
 }

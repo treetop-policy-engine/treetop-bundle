@@ -13,7 +13,7 @@ use treetop_bundle::{
     ArchiveLimits, BundleArchive, BundleBuilder, BundleError, BundleManifest, LabelSet,
     SignaturePolicy, SigningKey, TrustStore, TrustedKey,
 };
-use treetop_core::{Action, Decision, PolicyError, Principal, Request, Resource, User};
+use treetop_core::{Action, PolicyError, Principal, Request, Resource, User};
 
 struct Fixture {
     _temporary: TempDir,
@@ -113,9 +113,53 @@ fn builds_byte_identical_archives() {
     let monolithic = validated.prepare_engine().unwrap();
     assert!(monolithic.policy_store_ids().is_none());
     let scoped = validated.prepare_engine_with_policy_stores().unwrap();
+    let labels_version = monolithic.current_version().label_set.unwrap();
+    assert_eq!(
+        scoped.current_version().label_set,
+        Some(labels_version.clone())
+    );
+    assert_eq!(
+        validated
+            .prepare_engine()
+            .unwrap()
+            .current_version()
+            .label_set,
+        Some(labels_version)
+    );
     let store_ids = scoped.policy_store_ids().unwrap();
     assert_eq!(store_ids.len(), 1);
     assert_eq!(store_ids[0].as_str(), "dns");
+}
+
+#[test]
+fn label_version_changes_when_configuration_changes() {
+    let fixture = Fixture::valid();
+    let prepare = || {
+        BundleBuilder::from_manifest(&fixture.bundle_manifest)
+            .unwrap()
+            .build(None)
+            .unwrap()
+            .validate(
+                SignaturePolicy::AllowUnsigned,
+                &TrustStore::new(),
+                ArchiveLimits::default(),
+            )
+            .unwrap()
+            .prepare_engine()
+            .unwrap()
+            .current_version()
+    };
+    let before = prepare();
+    let labels_path = fixture
+        .bundle_manifest
+        .parent()
+        .unwrap()
+        .join("labels.json");
+    let source = fs::read_to_string(&labels_path).unwrap();
+    write(&labels_path, &source.replace("^prod-", "^stage-"));
+    let after = prepare();
+    assert_eq!(before.hash, after.hash);
+    assert_ne!(before.label_set, after.label_set);
 }
 
 #[test]
@@ -416,57 +460,56 @@ role = "global"
     assert_eq!(store_ids[1].as_str(), "www");
 
     let request = |user: &str, namespace: &str, resource_kind: &str| Request {
-        principal: Principal::User(User::new(
-            user,
-            None,
-            Some(vec!["Organization".to_string()]),
-        )),
+        principal: Principal::User(
+            User::new(user, None, Some(vec!["Organization".to_string()])).unwrap(),
+        ),
         action: Action::new(
             "read",
             Some(vec!["ExampleCo".to_string(), namespace.to_string()]),
-        ),
+        )
+        .unwrap(),
         resource: Resource::new(
             format!("ExampleCo::{namespace}::{resource_kind}"),
             "resource-1",
-        ),
+        )
+        .unwrap(),
     };
-    assert!(matches!(
-        engine.evaluate(&request("active", "DNS", "Host")).unwrap(),
-        Decision::Allow { .. }
-    ));
-    assert!(matches!(
-        engine.evaluate(&request("active", "WWW", "Page")).unwrap(),
-        Decision::Allow { .. }
-    ));
+    assert!(
+        engine
+            .evaluate(&request("active", "DNS", "Host"))
+            .unwrap()
+            .is_allowed()
+    );
+    assert!(
+        engine
+            .evaluate(&request("active", "WWW", "Page"))
+            .unwrap()
+            .is_allowed()
+    );
 
     let blocked_request = Request {
-        principal: Principal::User(User::new(
-            "blocked",
-            None,
-            Some(vec!["Organization".to_string()]),
-        )),
+        principal: Principal::User(
+            User::new("blocked", None, Some(vec!["Organization".to_string()])).unwrap(),
+        ),
         action: Action::new(
             "read",
             Some(vec!["ExampleCo".to_string(), "DNS".to_string()]),
-        ),
-        resource: Resource::new("ExampleCo::DNS::Host", "host-1"),
+        )
+        .unwrap(),
+        resource: Resource::new("ExampleCo::DNS::Host", "host-1").unwrap(),
     };
-    assert!(matches!(
-        engine.evaluate(&blocked_request).unwrap(),
-        Decision::Deny { .. }
-    ));
+    assert!(!engine.evaluate(&blocked_request).unwrap().is_allowed());
 
     let conflicting_request = Request {
-        principal: Principal::User(User::new(
-            "active",
-            None,
-            Some(vec!["Organization".to_string()]),
-        )),
+        principal: Principal::User(
+            User::new("active", None, Some(vec!["Organization".to_string()])).unwrap(),
+        ),
         action: Action::new(
             "read",
             Some(vec!["ExampleCo".to_string(), "DNS".to_string()]),
-        ),
-        resource: Resource::new("ExampleCo::WWW::Page", "page-1"),
+        )
+        .unwrap(),
+        resource: Resource::new("ExampleCo::WWW::Page", "page-1").unwrap(),
     };
     assert!(matches!(
         engine.evaluate(&conflicting_request),

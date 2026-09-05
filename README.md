@@ -6,7 +6,7 @@ Treetop REST.
 
 The published library owns manifest parsing, strict label validation, policy
 and schema composition, Ed25519 trust policy, archive limits, and preparation
-of a complete `treetop_core::PolicyEngine`. The `treetop-bundle-cli` workspace
+of a complete `PreparedEngine` retaining its Core schema mode. The `treetop-bundle-cli` workspace
 package builds the GitHub-distributed `treetop-bundle` binary and is not
 published to crates.io.
 
@@ -53,8 +53,23 @@ form, each ordinary module is a store and global-module policies are installed
 in every store. Ordinary modules must be independent: a policy that references
 another ordinary module's namespace makes scoped preparation fail closed.
 
-Label patterns in each rule are compiled into one `RegexSet`, so all patterns
-are evaluated in a single search. To keep untrusted label documents within a
+Preparation returns `PreparedEngine::SchemaFree` or
+`PreparedEngine::SchemaEnforcing`. Use the common `evaluate` methods, or match
+the variant for schema-specific Core operations. `engine.session()` captures
+one immutable generation for batch evaluation and version reporting.
+
+Different resource kinds may share a label output name. The runtime groups
+those rules under one owner and selects the matching kind; duplicate outputs
+within the same kind remain invalid. Core removes caller-provided outputs
+before read-only derivation, including on resources where no rule applies.
+Invalid or reserved output names fail during label parsing.
+
+Archive validation retains its exact generator-version checks. Rebuild and
+re-sign existing archives with the upgraded bundle CLI before deploying them
+to an upgraded consumer.
+
+Up to four patterns use individually compiled regexes; larger rules use one
+`RegexSet` so their patterns are evaluated in a single search. To keep untrusted label documents within a
 predictable resource budget, a document may contain at most 256 rules, 1,024
 patterns per rule, 4,096 patterns in total, 16 KiB per regex, and 1 MiB of
 regex source in total. Each compiled set also has explicit 2 MiB program and

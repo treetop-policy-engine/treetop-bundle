@@ -1,7 +1,8 @@
 use crate::signing::{BundleSignature, SignaturePolicy, SigningKey, TrustStore};
 use crate::validation::{BundleParts, ModuleRecord, validate_archive_parts};
 use crate::{
-    BundleError, CEDAR_VERSION, Diagnostic, FORMAT_VERSION, LabelSet, Result, TREETOP_CORE_VERSION,
+    BundleError, CEDAR_VERSION, Diagnostic, FORMAT_VERSION, LabelSet, PreparedEngine, Result,
+    TREETOP_CORE_VERSION,
 };
 use flate2::bufread::GzDecoder;
 use flate2::{Compression, GzBuilder};
@@ -197,7 +198,7 @@ impl ValidatedBundle {
     }
 
     /// Build a complete engine without modifying any application state.
-    pub fn prepare_engine(&self) -> Result<PolicyEngine> {
+    pub fn prepare_engine(&self) -> Result<PreparedEngine> {
         self.prepare_engine_with_layout(None)
     }
 
@@ -210,7 +211,7 @@ impl ValidatedBundle {
     /// ordinary policy references another ordinary module's namespace.
     ///
     /// [`Self::prepare_engine`] remains the backward-compatible monolithic path.
-    pub fn prepare_engine_with_policy_stores(&self) -> Result<PolicyEngine> {
+    pub fn prepare_engine_with_policy_stores(&self) -> Result<PreparedEngine> {
         let stores = self
             .modules
             .iter()
@@ -233,7 +234,7 @@ impl ValidatedBundle {
     fn prepare_engine_with_layout(
         &self,
         layout: Option<PolicyStoreLayout>,
-    ) -> Result<PolicyEngine> {
+    ) -> Result<PreparedEngine> {
         let mut engine = match (&self.schema_json, layout) {
             (Some(schema), layout) => {
                 let schema =
@@ -251,23 +252,26 @@ impl ValidatedBundle {
                     ),
                     None => PolicyEngine::new_from_str_with_schema(&self.policies, schema),
                 }
+                .map(PreparedEngine::from)
                 .map_err(policy_engine_error)?
             }
             (None, Some(layout)) => {
                 PolicyEngine::new_from_str_with_policy_stores(&self.policies, layout)
+                    .map(PreparedEngine::from)
                     .map_err(policy_engine_error)?
             }
-            (None, None) => {
-                PolicyEngine::new_from_str(&self.policies).map_err(policy_engine_error)?
-            }
+            (None, None) => PolicyEngine::new_from_str(&self.policies)
+                .map(PreparedEngine::from)
+                .map_err(policy_engine_error)?,
         };
         let labelers = self.labels.to_labelers();
         if !labelers.is_empty() {
-            let mut builder = LabelRegistryBuilder::new();
+            let mut builder =
+                LabelRegistryBuilder::versioned(sha256_hex(self.labels_json()?.as_bytes()));
             for labeler in labelers {
                 builder = builder.add_labeler(labeler);
             }
-            engine = engine.with_label_registry(builder.build());
+            engine = engine.with_label_registry(builder.build().map_err(policy_engine_error)?);
         }
         Ok(engine)
     }
