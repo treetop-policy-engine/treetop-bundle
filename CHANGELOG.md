@@ -4,7 +4,7 @@
 
 ### Changed
 
-- **BREAKING**: Upgrade Core to 0.0.24. Engine preparation now returns
+- **BREAKING**: Upgrade Core to 0.0.25. Engine preparation now returns
   `PreparedEngine`, with explicit schema-free and schema-enforcing variants.
   Use its common evaluation methods or match a variant for mode-specific Core
   operations. `PreparedEvaluationSession` captures one generation for batches.
