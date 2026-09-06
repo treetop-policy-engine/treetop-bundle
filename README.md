@@ -15,7 +15,7 @@ published to crates.io.
 Each project has a `treetop-module.toml`:
 
 ```toml
-format_version = 1
+format_version = 2
 name = "dns"
 namespace = "ExampleCo::DNS"
 imports = ["ExampleCo::Identity"]
@@ -28,7 +28,7 @@ The organization-level manifest selects modules and is the only place that can
 grant a global policy role:
 
 ```toml
-format_version = 1
+format_version = 2
 name = "production"
 
 [[modules]]
@@ -45,7 +45,7 @@ symlink escapes are rejected. Bundle output is a canonical gzip-compressed tar
 containing `manifest.json`, an optional `signature.json`, `policies.cedar`, an
 optional `schema.json`, and `labels.json` in that exact order.
 
-Validated archives can be prepared as either a backward-compatible monolithic
+Validated archives can be prepared as either a monolithic
 policy engine with `ValidatedBundle::prepare_engine()` or an opt-in
 namespace-partitioned engine with
 `ValidatedBundle::prepare_engine_with_policy_stores()`. In the partitioned
@@ -58,11 +58,27 @@ Preparation returns `PreparedEngine::SchemaFree` or
 the variant for schema-specific Core operations. `engine.session()` captures
 one immutable generation for batch evaluation and version reporting.
 
-Different resource kinds may share a label output name. The runtime groups
-those rules under one owner and selects the matching kind; duplicate outputs
-within the same kind remain invalid. Core removes caller-provided outputs
-before read-only derivation, including on resources where no rule applies.
-Invalid or reserved output names fail during label parsing.
+Label rules declare a validated target using the same format as REST 0.1:
+
+```json
+{
+  "target": { "resource_type": "App::Host", "attribute": "labels" },
+  "field": "name",
+  "patterns": [{ "name": "prod", "regex": "^prod" }]
+}
+```
+
+One exact resource type and attribute form the ownership key. Different types
+may own the same name independently; duplicate tuples are invalid. Core clears
+all owned outputs on the actual resource type before ordered, read-only derivation.
+Other types' attributes remain application-owned. Constrain policy resource types
+before trusting derived labels. Wildcards, old `kind`/`output` fields, and unknown
+fields are rejected. There is one runtime labeler per rule, with no grouping adapter.
+
+This is a breaking 0.1.0 release using format version 2 for bundle/module manifests,
+archives, and signatures. Replace label rule syntax, set `format_version = 2`,
+and rebuild and re-sign every archive. Version 1 is rejected rather than migrated
+implicitly. See [the migration](MIGRATION.md).
 
 Archive validation retains its exact generator-version checks. Rebuild and
 re-sign existing archives with the upgraded bundle CLI before deploying them

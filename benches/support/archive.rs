@@ -30,7 +30,7 @@ permit(
     fs::write(root.join("policies.cedar"), policies).unwrap();
     fs::write(
         root.join("treetop-module.toml"),
-        r#"format_version = 1
+        r#"format_version = 2
 name = "bench"
 namespace = "Example"
 policies = ["policies.cedar"]
@@ -39,7 +39,7 @@ policies = ["policies.cedar"]
     .unwrap();
     fs::write(
         root.join("treetop-bundle.toml"),
-        r#"format_version = 1
+        r#"format_version = 2
 name = "benchmark"
 
 [[modules]]
@@ -77,7 +77,7 @@ permit(
         fs::write(
             root.join(format!("{module_name}.toml")),
             format!(
-                "format_version = 1\nname = {module_name:?}\nnamespace = {namespace:?}\npolicies = [{:?}]\n",
+                "format_version = 2\nname = {module_name:?}\nnamespace = {namespace:?}\npolicies = [{:?}]\n",
                 format!("{module_name}.cedar")
             ),
         )
@@ -96,7 +96,7 @@ forbid(principal == Example::User::"blocked", action, resource);
     .unwrap();
     fs::write(
         root.join("global.toml"),
-        r#"format_version = 1
+        r#"format_version = 2
 name = "global"
 namespace = "Example::Global"
 policies = ["global.cedar"]
@@ -106,7 +106,7 @@ policies = ["global.cedar"]
     module_entries.push_str("\n[[modules]]\nmanifest = \"global.toml\"\nrole = \"global\"\n");
     fs::write(
         root.join("treetop-bundle.toml"),
-        format!("format_version = 1\nname = \"policy-store-benchmark\"\n{module_entries}"),
+        format!("format_version = 2\nname = \"policy-store-benchmark\"\n{module_entries}"),
     )
     .unwrap();
 
