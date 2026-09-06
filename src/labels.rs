@@ -1,7 +1,8 @@
 use crate::{BundleError, Diagnostic, Result};
 use cedar_policy::{EntityTypeName, Schema};
 use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -67,13 +68,21 @@ struct RawLabelTarget {
 }
 
 /// A validated label rule.
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct LabelRule {
-    target: LabelTarget,
     field: String,
     patterns: Vec<LabelPattern>,
-    #[serde(skip)]
     runtime: Arc<dyn Labeler>,
+}
+
+impl Serialize for LabelRule {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let mut rule = serializer.serialize_struct("LabelRule", 3)?;
+        rule.serialize_field("target", self.target())?;
+        rule.serialize_field("field", &self.field)?;
+        rule.serialize_field("patterns", &self.patterns)?;
+        rule.end()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +94,7 @@ enum CompiledPatterns {
 impl std::fmt::Debug for LabelRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LabelRule")
-            .field("target", &self.target)
+            .field("target", self.target())
             .field("field", &self.field)
             .field("patterns", &self.patterns)
             .finish_non_exhaustive()
@@ -94,7 +103,9 @@ impl std::fmt::Debug for LabelRule {
 
 impl PartialEq for LabelRule {
     fn eq(&self, other: &Self) -> bool {
-        self.target == other.target && self.field == other.field && self.patterns == other.patterns
+        self.target() == other.target()
+            && self.field == other.field
+            && self.patterns == other.patterns
     }
 }
 
@@ -129,8 +140,10 @@ impl Labeler for RegexSetLabeler {
 
 impl LabelRule {
     /// Validated exact resource type and derived attribute ownership.
+    ///
+    /// Configuration and application share the runtime's immutable declaration.
     pub fn target(&self) -> &LabelTarget {
-        &self.target
+        self.runtime.target()
     }
 
     pub fn field(&self) -> &str {
@@ -281,10 +294,8 @@ impl LabelSet {
             if patterns_valid {
                 match compile_patterns(&patterns) {
                     Ok(compiled) => {
-                        match runtime_labeler(target.clone(), &raw_rule.field, &patterns, compiled)
-                        {
+                        match runtime_labeler(target, &raw_rule.field, &patterns, compiled) {
                             Ok(runtime) => rules.push(LabelRule {
-                                target,
                                 field: raw_rule.field,
                                 patterns,
                                 runtime,
@@ -321,8 +332,8 @@ impl LabelSet {
                     "labels.duplicate_destination",
                     format!(
                         "duplicate label destination ({}, {})",
-                        rule.target.resource_type(),
-                        rule.target.attribute()
+                        rule.target().resource_type(),
+                        rule.target().attribute()
                     ),
                 ));
             }
@@ -360,23 +371,23 @@ impl LabelSet {
             .collect::<HashSet<_>>();
         let mut diagnostics = Vec::new();
         for rule in &self.0 {
-            if !known_types.contains(rule.target.resource_type()) {
+            if !known_types.contains(rule.target().resource_type()) {
                 diagnostics.push(Diagnostic::error(
                     "labels.unknown_kind",
                     format!(
                         "label kind {} is not declared in the schema",
-                        rule.target.resource_type()
+                        rule.target().resource_type()
                     ),
                 ));
                 continue;
             }
-            let Some(attributes) = entity_attributes(schema_json, rule.target.resource_type())
+            let Some(attributes) = entity_attributes(schema_json, rule.target().resource_type())
             else {
                 diagnostics.push(Diagnostic::error(
                     "labels.missing_shape",
                     format!(
                         "label kind {} has no record shape",
-                        rule.target.resource_type()
+                        rule.target().resource_type()
                     ),
                 ));
                 continue;
@@ -387,7 +398,7 @@ impl LabelSet {
                     "labels.field_not_string",
                     format!(
                         "{}.{} must have schema type String, found {value}",
-                        rule.target.resource_type(),
+                        rule.target().resource_type(),
                         rule.field
                     ),
                 )),
@@ -395,27 +406,27 @@ impl LabelSet {
                     "labels.field_missing",
                     format!(
                         "{}.{} is not declared in the schema",
-                        rule.target.resource_type(),
+                        rule.target().resource_type(),
                         rule.field
                     ),
                 )),
             }
-            match attributes.get(rule.target.attribute()) {
+            match attributes.get(rule.target().attribute()) {
                 Some(value) if is_string_set_type(value) => {}
                 Some(value) => diagnostics.push(Diagnostic::error(
                     "labels.output_not_string_set",
                     format!(
                         "{}.{} must have schema type Set<String>, found {value}",
-                        rule.target.resource_type(),
-                        rule.target.attribute(),
+                        rule.target().resource_type(),
+                        rule.target().attribute(),
                     ),
                 )),
                 None => diagnostics.push(Diagnostic::error(
                     "labels.output_missing",
                     format!(
                         "{}.{} is not declared in the schema",
-                        rule.target.resource_type(),
-                        rule.target.attribute()
+                        rule.target().resource_type(),
+                        rule.target().attribute()
                     ),
                 )),
             }
