@@ -30,6 +30,8 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: nightly
+      - name: Validate the committed fuzz lockfile
+        run: cargo +nightly metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 > /dev/null
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
         with:
@@ -47,6 +49,8 @@ jobs:
           -max_len=65536
           -max_total_time="$FUZZ_TIME"
           -timeout=10
+      - name: Verify fuzzing preserved the lockfile
+        run: git diff --exit-code -- fuzz/Cargo.lock
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
