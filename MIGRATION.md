@@ -23,15 +23,8 @@ Custom Rust labelers return a validated Core `LabelTarget` from `target()` and
 implement immutable `derive`. Arbitrary `applies_to` predicates and global output
 ownership are removed. `LabelRule::target()` replaces `kind()` and `output()`.
 
-The coordinated PRs remain unmerged pending approval. Candidate dependency commits
-are pinned and package verification uses those exact candidates. Publish Core before
-Bundle, then REST and SDKs, before updating consumers to their published artifacts.
+## Published dependencies and release order
 
-## Candidate verification and release order
-
-The checked-in Cargo configuration pins the exact unmerged Core candidate for
-reproducible CI and package verification. The published manifest requires Core
-0.1.0. After approval, publish Core first, switch this candidate patch to the
-registry release, refresh the lockfile, and repeat package verification before
-publishing Bundle. Do not merge or publish these coordinated changes before
-user approval.
+Bundle requires the published Core 0.1.0 package from crates.io. Its lockfile and
+package verification use registry sources without candidate Git patches. Release
+Core before Bundle, then REST and SDKs, before upgrading the remaining consumers.
