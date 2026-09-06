@@ -41,7 +41,7 @@ fn deny_warnings_changes_a_schema_free_label_check_to_exit_one() {
     write(&policy, "permit(principal, action, resource);\n");
     write(
         &labels,
-        r#"[{"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"prod","regex":"^prod"}]}]"#,
+        r#"[{"target": {"resource_type": "App::Host", "attribute": "labels"}, "field": "name","patterns":[{"name":"prod","regex":"^prod"}]}]"#,
     );
 
     let output = run([
@@ -79,7 +79,7 @@ fn build_emits_structured_content_errors_and_exit_one() {
     let output_path = temporary.path().join("bundle.tar.gz");
     write(
         &manifest,
-        "format_version = 1\nname = \"broken\"\nunknown = true\n",
+        "format_version = 2\nname = \"broken\"\nunknown = true\n",
     );
 
     let output = run([

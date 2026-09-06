@@ -6,9 +6,7 @@ use treetop_core::{AttrValue, Labeler, Resource};
 
 pub const LABELS_JSON: &str = r#"[
   {
-    "kind": "Example::Photo",
-    "field": "name",
-    "output": "labels",
+    "target": {"resource_type": "Example::Photo", "attribute": "labels"}, "field": "name",
     "patterns": [
       {"name": "portrait", "regex": "(?i)(^|/)portraits?/"},
       {"name": "raw", "regex": "(?i)\\.(cr2|nef|arw)$"},
@@ -16,9 +14,7 @@ pub const LABELS_JSON: &str = r#"[
     ]
   },
   {
-    "kind": "Example::Document",
-    "field": "path",
-    "output": "classifications",
+    "target": {"resource_type": "Example::Document", "attribute": "classifications"}, "field": "path",
     "patterns": [
       {"name": "finance", "regex": "(?i)(^|/)finance/"},
       {"name": "legal", "regex": "(?i)(^|/)legal/"},
@@ -37,9 +33,7 @@ pub fn labels_json(pattern_count: usize) -> String {
         })
         .collect::<Vec<_>>();
     serde_json::json!([{
-        "kind": "Example::Host",
-        "field": "name",
-        "output": "labels",
+        "target": {"resource_type": "Example::Host", "attribute": "labels"}, "field": "name",
         "patterns": patterns,
     }])
     .to_string()

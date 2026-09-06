@@ -210,7 +210,7 @@ impl ValidatedBundle {
     /// module boundaries are not valid independent stores, including when an
     /// ordinary policy references another ordinary module's namespace.
     ///
-    /// [`Self::prepare_engine`] remains the backward-compatible monolithic path.
+    /// [`Self::prepare_engine`] prepares a monolithic policy engine.
     pub fn prepare_engine_with_policy_stores(&self) -> Result<PreparedEngine> {
         let stores = self
             .modules

@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-06
+
+### Breaking changes
+
+- Require format version 2 in bundle/module manifests, archives, and signatures.
+  Upgrade manifests and rebuild/re-sign archives; version 1 is rejected.
+- Replace label `kind` and `output` fields with a validated `target` object containing
+  `resource_type` and `attribute`. Unknown fields and old syntax fail clearly.
+- Use Core 0.1.0 declared targets: each exact `(resource type, attribute)` has one
+  owner. Remove shared-output grouping. Runtime labelers preserve rule order and
+  only sanitize attributes on their declared type; unrelated inputs survive.
+- Replace `LabelRule::kind()` and `output()` with `target()` and its validated
+  accessors. Core deprecated policy-candidate aliases and legacy version defaults
+  are removed. See [MIGRATION.md](MIGRATION.md) for the coordinated upgrade.
+
 ## [0.0.7] - 2026-09-05
 
 ### Changed

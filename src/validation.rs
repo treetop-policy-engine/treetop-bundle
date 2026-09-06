@@ -238,13 +238,13 @@ pub(crate) fn compile_manifest(manifest: &BundleManifest) -> Result<BundleParts>
             match LabelSet::from_json_str(&source) {
                 Ok(labels) => {
                     for rule in labels.rules() {
-                        if !namespace_owns(module.namespace(), rule.kind()) {
+                        if !namespace_owns(module.namespace(), rule.target().resource_type()) {
                             diagnostics.push(
                                 Diagnostic::error(
                                     "labels.namespace_violation",
                                     format!(
                                         "label kind {} is outside namespace {}",
-                                        rule.kind(),
+                                        rule.target().resource_type(),
                                         module.namespace()
                                     ),
                                 )
@@ -414,11 +414,14 @@ pub(crate) fn validate_archive_parts(
     for rule in labels.rules() {
         if !modules
             .iter()
-            .any(|module| namespace_owns(&module.namespace, rule.kind()))
+            .any(|module| namespace_owns(&module.namespace, rule.target().resource_type()))
         {
             diagnostics.push(Diagnostic::error(
                 "labels.namespace_violation",
-                format!("label kind {} is not owned by any module", rule.kind()),
+                format!(
+                    "label kind {} is not owned by any module",
+                    rule.target().resource_type()
+                ),
             ));
         }
     }

@@ -55,9 +55,7 @@ namespace ExampleCo::DNS {
             root.join("labels.json"),
             r#"[
   {
-    "kind": "ExampleCo::DNS::Host",
-    "field": "name",
-    "output": "labels",
+    "target": {"resource_type": "ExampleCo::DNS::Host", "attribute": "labels"}, "field": "name",
     "patterns": [{"name": "production", "regex": "^prod-"}]
   }
 ]"#,
@@ -65,7 +63,7 @@ namespace ExampleCo::DNS {
         write(
             root.join("treetop-module.toml"),
             r#"
-format_version = 1
+format_version = 2
 name = "dns"
 namespace = "ExampleCo::DNS"
 imports = []
@@ -78,7 +76,7 @@ labels = ["labels.json"]
         write(
             &bundle_manifest,
             r#"
-format_version = 1
+format_version = 2
 name = "production"
 
 [[modules]]
@@ -91,6 +89,51 @@ role = "ordinary"
             bundle_manifest,
         }
     }
+}
+
+#[test]
+fn format_one_sources_and_archives_are_rejected() {
+    for name in ["treetop-bundle.toml", "treetop-module.toml"] {
+        let fixture = Fixture::valid();
+        let path = fixture.bundle_manifest.parent().unwrap().join(name);
+        let source = fs::read_to_string(&path).unwrap();
+        write(
+            &path,
+            &source.replace("format_version = 2", "format_version = 1"),
+        );
+        let error = if name == "treetop-bundle.toml" {
+            BundleManifest::from_path(&path).unwrap_err()
+        } else {
+            treetop_bundle::ModuleManifest::from_path(&path).unwrap_err()
+        };
+        assert!(
+            error.diagnostics().iter().any(|diagnostic| {
+                diagnostic.code == "manifest.unsupported_version"
+                    && diagnostic.message.contains("expected 2")
+            }),
+            "{error:?}"
+        );
+    }
+
+    let fixture = Fixture::valid();
+    let archive = BundleBuilder::from_manifest(&fixture.bundle_manifest)
+        .unwrap()
+        .build(None)
+        .unwrap();
+    let old = rewrite_entry(&archive, "manifest.json", |contents| {
+        let mut manifest: serde_json::Value = serde_json::from_slice(contents).unwrap();
+        manifest["format_version"] = 1.into();
+        serde_json::to_vec(&manifest).unwrap()
+    });
+    let error = old
+        .validate(
+            SignaturePolicy::AllowUnsigned,
+            &TrustStore::new(),
+            ArchiveLimits::default(),
+        )
+        .err()
+        .expect("format 1 archive must fail");
+    assert!(error.to_string().contains("unsupported"));
 }
 
 #[test]
@@ -335,7 +378,7 @@ permit (
     write(
         root.join("treetop-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "platform"
 namespace = "ExampleCo::Platform"
 policies = ["policy.cedar"]
@@ -345,7 +388,7 @@ policies = ["policy.cedar"]
     write(
         &manifest,
         r#"
-format_version = 1
+format_version = 2
 name = "global-test"
 
 [[modules]]
@@ -378,7 +421,7 @@ permit (
     write(
         root.join("dns-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "dns"
 namespace = "ExampleCo::DNS"
 policies = ["dns.cedar"]
@@ -398,7 +441,7 @@ permit (
     write(
         root.join("www-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "www"
 namespace = "ExampleCo::WWW"
 policies = ["www.cedar"]
@@ -418,7 +461,7 @@ forbid (
     write(
         root.join("global-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "platform"
 namespace = "ExampleCo::Platform"
 policies = ["global.cedar"]
@@ -428,7 +471,7 @@ policies = ["global.cedar"]
     write(
         &manifest,
         r#"
-format_version = 1
+format_version = 2
 name = "scoped"
 
 [[modules]]
@@ -589,14 +632,14 @@ fn module_namespaces_must_be_segment_prefix_disjoint() {
         fs::create_dir(&directory).unwrap();
         write(
             directory.join("treetop-module.toml"),
-            &format!("format_version = 1\nname = {name:?}\nnamespace = {namespace:?}\n"),
+            &format!("format_version = 2\nname = {name:?}\nnamespace = {namespace:?}\n"),
         );
     }
     let manifest = root.join("treetop-bundle.toml");
     write(
         &manifest,
         r#"
-format_version = 1
+format_version = 2
 name = "overlap"
 
 [[modules]]
@@ -624,7 +667,7 @@ fn imports_must_exactly_match_a_selected_namespace() {
     write(
         root.join("treetop-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "dns"
 namespace = "ExampleCo::DNS"
 imports = ["ExampleCo::Identity"]
@@ -634,7 +677,7 @@ imports = ["ExampleCo::Identity"]
     write(
         &manifest,
         r#"
-format_version = 1
+format_version = 2
 name = "imports"
 
 [[modules]]
@@ -669,7 +712,7 @@ fn module_inputs_may_not_escape_through_symlinks() {
     write(
         module.join("treetop-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "dns"
 namespace = "ExampleCo::DNS"
 policies = ["policy.cedar"]
@@ -729,8 +772,8 @@ fn compressed_file_limit_is_enforced_while_reading() {
 fn label_destinations_are_unique() {
     let error = LabelSet::from_json_str(
         r#"[
-          {"kind":"App::Host","field":"name","output":"labels","patterns":[{"name":"a","regex":"a"}]},
-          {"kind":"App::Host","field":"fqdn","output":"labels","patterns":[{"name":"b","regex":"b"}]}
+          {"target": {"resource_type": "App::Host", "attribute": "labels"}, "field": "name","patterns":[{"name":"a","regex":"a"}]},
+          {"target": {"resource_type": "App::Host", "attribute": "labels"}, "field": "fqdn","patterns":[{"name":"b","regex":"b"}]}
         ]"#,
     )
     .unwrap_err();
@@ -877,7 +920,7 @@ fn write_single_module(root: &Path, role: &str, policy: &str) -> PathBuf {
     write(
         root.join("treetop-module.toml"),
         r#"
-format_version = 1
+format_version = 2
 name = "dns"
 namespace = "ExampleCo::DNS"
 policies = ["policy.cedar"]
@@ -888,7 +931,7 @@ policies = ["policy.cedar"]
         &manifest,
         &format!(
             r#"
-format_version = 1
+format_version = 2
 name = "single"
 
 [[modules]]

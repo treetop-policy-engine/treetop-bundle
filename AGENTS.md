@@ -1,5 +1,13 @@
 # Repository Guidelines
 
+## Early-release contract
+
+Prioritize correctness and strict, uniform project contracts over compatibility.
+Remove deprecated APIs, old-syntax aliases, and obsolete server fallbacks when
+replacing a contract. Document breaking changes and concrete migration steps.
+Label ownership and sanitization use Core's declared exact resource-type/attribute
+target. Keep configuration syntax identical to REST and reject legacy formats.
+
 ## Performance benchmarks
 
 - Put every Cargo benchmark entrypoint in a top-level `benches/*.rs` file.
