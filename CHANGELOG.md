@@ -11,6 +11,13 @@
   Consumers inspecting policy JSON must handle array-valued nested `has`
   attributes. Manifest and signature format version 2 is unchanged.
 
+### Security
+
+- Preserve rejection of invalid action applications during schema validation.
+  Cedar 4.13 now reports these as warnings; Bundle keeps them as errors for
+  standalone checks, source compilation, and archive validation, matching Core.
+  Other warnings retain their existing `deny_warnings` behavior.
+
 ### Changed
 
 - Refresh all Rust dependencies and both lockfiles, including flate2 1.1.10,

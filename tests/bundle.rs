@@ -137,6 +137,34 @@ fn format_one_sources_and_archives_are_rejected() {
 }
 
 #[test]
+fn invalid_action_application_cannot_be_built_into_an_archive() {
+    let fixture = Fixture::valid();
+    let policy = fixture
+        .bundle_manifest
+        .parent()
+        .unwrap()
+        .join("policy.cedar");
+    write(
+        &policy,
+        r#"@id("dns.read")
+        permit (
+            principal is ExampleCo::DNS::Host,
+            action == ExampleCo::DNS::Action::"read",
+            resource is ExampleCo::DNS::Host
+        );"#,
+    );
+    let error = BundleBuilder::from_manifest(&fixture.bundle_manifest)
+        .unwrap()
+        .build(None)
+        .unwrap_err();
+
+    assert!(error.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == "policy.schema_validation"
+            && diagnostic.severity == treetop_bundle::DiagnosticSeverity::Error
+    }));
+}
+
+#[test]
 fn builds_byte_identical_archives() {
     let fixture = Fixture::valid();
     let builder = BundleBuilder::from_manifest(&fixture.bundle_manifest).unwrap();

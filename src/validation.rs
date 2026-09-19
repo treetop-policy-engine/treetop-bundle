@@ -8,7 +8,8 @@ use cedar_policy::pst::{
     PrincipalConstraint as PstPrincipalConstraint, ResourceConstraint as PstResourceConstraint,
 };
 use cedar_policy::{
-    Policy, PolicyId, PolicySet, Schema, SchemaFragment, ValidationMode, Validator,
+    Policy, PolicyId, PolicySet, Schema, SchemaFragment, ValidationMode, ValidationWarning,
+    Validator,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -696,11 +697,14 @@ fn validate_policy_set(policy_set: &PolicySet, schema: &Schema, diagnostics: &mu
             .validation_errors()
             .map(|error| Diagnostic::error("policy.schema_validation", error.to_string())),
     );
-    diagnostics.extend(
-        result
-            .validation_warnings()
-            .map(|warning| Diagnostic::warning("policy.schema_warning", warning.to_string())),
-    );
+    diagnostics.extend(result.validation_warnings().map(|warning| {
+        // Cedar 4.13 downgraded this error; retain Bundle/Core's strict contract.
+        if matches!(warning, ValidationWarning::InvalidActionApplication(_)) {
+            Diagnostic::error("policy.schema_validation", warning.to_string())
+        } else {
+            Diagnostic::warning("policy.schema_warning", warning.to_string())
+        }
+    }));
 }
 
 fn validate_schema_ownership(
