@@ -2156,7 +2156,8 @@ dependencies = [
 [[package]]
 name = "treetop-core"
 version = "0.2.0"
-source = "git+https://github.com/treetop-policy-engine/treetop-core?rev=b8f7f2c567f6ca74d438aacf28c5412a2b39cc37#b8f7f2c567f6ca74d438aacf28c5412a2b39cc37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a34723f76375f9410305e50f6eadf62ac9a7f3dc4bc9e3e0d1bc4785b015437b"
 dependencies = [
  "arc-swap",
  "cedar-policy",

@@ -24,6 +24,5 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Temporary coordinated release candidate; return to registry-only after Core 0.2.0.
-allow-git = ["https://github.com/treetop-policy-engine/treetop-core"]
+allow-git = []
 required-git-spec = "rev"
