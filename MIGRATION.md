@@ -1,6 +1,6 @@
-# Breaking migration to Bundle 0.1.0
+# Breaking migration to Bundle 0.2.0
 
-This release uses Core 0.1.0 and format version 2. Early Treetop releases prioritize
+This release uses Core 0.2.0 and Cedar 4.13.0 and format version 2. Early Treetop releases prioritize
 correctness and a strict shared contract over compatibility adapters.
 
 1. Change every bundle and module manifest to `format_version = 2`.
@@ -14,7 +14,7 @@ correctness and a strict shared contract over compatibility adapters.
 4. Constrain resource types in Cedar policies before trusting derived attributes.
    Only outputs owned on that type are removed before derivation; unrelated
    application-owned attributes survive. A missing derivation removes its output.
-5. Rebuild and re-sign archives using Bundle CLI 0.1.0. Old manifest, archive,
+5. Rebuild and re-sign archives using Bundle CLI 0.2.0. Old manifest, archive,
    signature, and generator versions are rejected. Never edit signed archives.
 6. Upgrade REST, SDKs, the CLI, workbench, and Bundle Action together. Policy versions
    now require explicit `label_set` (nullable) and unsigned `generation` metadata.
@@ -23,8 +23,16 @@ Custom Rust labelers return a validated Core `LabelTarget` from `target()` and
 implement immutable `derive`. Arbitrary `applies_to` predicates and global output
 ownership are removed. `LabelRule::target()` replaces `kind()` and `output()`.
 
+## Upgrading from Bundle 0.1.0
+
+Keep manifest and signature format version 2 and the existing declared label
+target syntax. Rebuild and re-sign every archive with Bundle CLI 0.2.0 because
+archive validation requires the exact generator, Core, and Cedar versions.
+Policy JSON consumers must handle array-valued `attr` for nested `has` checks
+from Cedar 4.13. Upgrade direct Core/Cedar dependencies together.
+
 ## Published dependencies and release order
 
-Bundle requires the published Core 0.1.0 package from crates.io. Its lockfile and
+Bundle requires the published Core 0.2.0 package from crates.io. Its lockfile and
 package verification use registry sources without candidate Git patches. Release
 Core before Bundle, then REST and SDKs, before upgrading the remaining consumers.

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-19
+
+### Breaking changes
+
+- Upgrade to Core 0.2.0 and Cedar 4.13.0. Rebuild and re-sign archives with
+  Bundle CLI 0.2.0: exact generator-version validation rejects older archives.
+  Consumers inspecting policy JSON must handle array-valued nested `has`
+  attributes. Manifest and signature format version 2 is unchanged.
+
+### Changed
+
+- Refresh all Rust dependencies and both lockfiles, including flate2 1.1.10,
+  clap 4.6.7, and toml 1.1.6. Retain Rust 1.93.1 support.
+- Refresh pinned GitHub Actions and align release artifact upload/download
+  actions with the current versions already used elsewhere in the project.
+
 ## [0.1.0] - 2026-09-06
 
 ### Breaking changes

@@ -75,7 +75,7 @@ Other types' attributes remain application-owned. Constrain policy resource type
 before trusting derived labels. Wildcards, old `kind`/`output` fields, and unknown
 fields are rejected. There is one runtime labeler per rule, with no grouping adapter.
 
-This is a breaking 0.1.0 release using format version 2 for bundle/module manifests,
+This is a breaking 0.2.0 release using Core 0.2.0, Cedar 4.13.0, and format version 2 for bundle/module manifests,
 archives, and signatures. Replace label rule syntax, set `format_version = 2`,
 and rebuild and re-sign every archive. Version 1 is rejected rather than migrated
 implicitly. See [the migration](MIGRATION.md).
