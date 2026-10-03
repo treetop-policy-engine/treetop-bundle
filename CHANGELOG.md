@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-03
+
 ### Breaking changes
 
 - Upgrade Bundle and its CLI to Core 0.3.0. Rebuild and re-sign archives with
