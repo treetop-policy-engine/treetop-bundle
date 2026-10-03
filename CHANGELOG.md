@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-03
+
+### Breaking changes
+
+- Upgrade Bundle and its CLI to Core 0.3.0. Rebuild and re-sign archives with
+  Bundle CLI 0.3.0: exact generator-version validation rejects older archives.
+  Format version 2, Cedar 4.13.0, and declared label targets are unchanged.
+- Core's public schema traits now use Utoipa 6. Rust consumers composing OpenAPI
+  schemas must upgrade their Utoipa dependency. `PermitPolicy.json` now contains
+  `Arc<PolicyJson>`; use `policy.json.to_value()` when a mutable JSON tree is needed.
+  Authorization and serialized decision JSON remain unchanged.
+
 ## [0.2.0] - 2026-09-19
 
 ### Breaking changes
