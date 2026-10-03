@@ -1,6 +1,6 @@
 [package]
 name = "treetop-bundle"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.93.1"
 license = "MIT"
@@ -43,7 +43,7 @@ sha2 = "0.11.0"
 tar = "0.4.46"
 thiserror = "2.0.20"
 toml = "1.1.6"
-treetop-core = "=0.2.0"
+treetop-core = "=0.3.0"
 zeroize = "1.9.0"
 
 [dev-dependencies]

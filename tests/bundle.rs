@@ -137,6 +137,49 @@ fn format_one_sources_and_archives_are_rejected() {
 }
 
 #[test]
+fn archive_generator_versions_match_linked_dependencies() {
+    let linked = treetop_core::build_info();
+    assert_eq!(treetop_bundle::TREETOP_CORE_VERSION, linked.crate_version);
+    assert_eq!(treetop_bundle::CEDAR_VERSION, linked.cedar_version);
+
+    let fixture = Fixture::valid();
+    let archive = BundleBuilder::from_manifest(&fixture.bundle_manifest)
+        .unwrap()
+        .build(None)
+        .unwrap();
+    archive
+        .validate(
+            SignaturePolicy::AllowUnsigned,
+            &TrustStore::new(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
+}
+
+#[test]
+fn archives_with_core_02_generator_metadata_are_rejected() {
+    let fixture = Fixture::valid();
+    let archive = BundleBuilder::from_manifest(&fixture.bundle_manifest)
+        .unwrap()
+        .build(None)
+        .unwrap();
+    let old = rewrite_entry(&archive, "manifest.json", |contents| {
+        let mut manifest: serde_json::Value = serde_json::from_slice(contents).unwrap();
+        manifest["generator"]["treetop_core"] = "0.2.0".into();
+        serde_json::to_vec(&manifest).unwrap()
+    });
+    let error = old
+        .validate(
+            SignaturePolicy::AllowUnsigned,
+            &TrustStore::new(),
+            ArchiveLimits::default(),
+        )
+        .err()
+        .expect("Core 0.2 archive must fail");
+    assert!(error.to_string().contains("generator dependency versions"));
+}
+
+#[test]
 fn invalid_action_application_cannot_be_built_into_an_archive() {
     let fixture = Fixture::valid();
     let policy = fixture
