@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- Update `ctutils` to 0.4.8 and `rustix` to 1.1.6 in the workspace and fuzz lockfiles.
+
 ## [0.3.0] - 2026-10-03
 
 ### Breaking changes
