@@ -166,7 +166,7 @@ dominated by the work factor encoded in each key.
 Run any probe locally with the matching runner:
 
 ```sh
-cargo install gungraun-runner --version 0.19.4 --locked
+cargo install gungraun-runner --version 0.20.0 --locked
 cargo bench --bench labels_parse_callgrind
 cargo bench --bench labels_parse_many_callgrind
 cargo bench --bench labels_to_labelers_callgrind
