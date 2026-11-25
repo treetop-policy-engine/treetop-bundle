@@ -1,4 +1,14 @@
-# Breaking migration to Bundle 0.3.0
+# Bundle migration guide
+
+## Upgrading from Bundle 0.3.0
+
+Rebuild every policy archive from its source manifests with Bundle CLI 0.4.0.
+Re-sign the rebuilt archives and deploy them with REST 0.3.0. Validation checks
+the exact generator versions of Bundle 0.4.0, Core 0.4.0, and Cedar 4.15.0.
+Keep format 2 manifests and the same declared label targets. Rust consumers
+with an exact Cedar pin must upgrade it to 4.15.0.
+
+## Migrating to Bundle 0.3.0
 
 This release uses Core 0.3.0 and Cedar 4.13.0 and format version 2. Early Treetop releases prioritize
 correctness and a strict shared contract over compatibility adapters.
@@ -44,6 +54,6 @@ from Cedar 4.13. Upgrade direct Core/Cedar dependencies together.
 
 ## Published dependencies and release order
 
-Bundle requires the published Core 0.3.0 package from crates.io. Its lockfile and
+Bundle 0.4.0 requires the published Core 0.4.0 package from crates.io. Its lockfile and
 package verification use registry sources without candidate Git patches. Release
 Core before Bundle, then REST and SDKs, before upgrading the remaining consumers.
