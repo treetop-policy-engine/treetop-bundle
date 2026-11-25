@@ -157,7 +157,7 @@ fn archive_generator_versions_match_linked_dependencies() {
 }
 
 #[test]
-fn archives_with_core_02_generator_metadata_are_rejected() {
+fn archives_with_previous_core_generator_metadata_are_rejected() {
     let fixture = Fixture::valid();
     let archive = BundleBuilder::from_manifest(&fixture.bundle_manifest)
         .unwrap()
@@ -165,7 +165,7 @@ fn archives_with_core_02_generator_metadata_are_rejected() {
         .unwrap();
     let old = rewrite_entry(&archive, "manifest.json", |contents| {
         let mut manifest: serde_json::Value = serde_json::from_slice(contents).unwrap();
-        manifest["generator"]["treetop_core"] = "0.2.0".into();
+        manifest["generator"]["treetop_core"] = "0.3.0".into();
         serde_json::to_vec(&manifest).unwrap()
     });
     let error = old
@@ -175,7 +175,7 @@ fn archives_with_core_02_generator_metadata_are_rejected() {
             ArchiveLimits::default(),
         )
         .err()
-        .expect("Core 0.2 archive must fail");
+        .expect("Core 0.3 archive must fail");
     assert!(error.to_string().contains("generator dependency versions"));
 }
 

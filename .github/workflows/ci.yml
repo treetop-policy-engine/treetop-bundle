@@ -21,12 +21,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
           components: clippy, rustfmt
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Validate the committed fuzz lockfile
@@ -38,17 +38,17 @@ jobs:
       - name: Build documentation
         run: cargo doc --locked --workspace --all-features --no-deps
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2@0.23.2 --config .markdownlint.json "**/*.md" "!target"
+        run: npx --yes markdownlint-cli2@0.24.2 --config .markdownlint.json "**/*.md" "!target"
       - name: Install cargo-audit
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
-          tool: cargo-audit@0.22.2
+          tool: cargo-audit@0.23.0
       - name: Audit dependencies
         run: cargo audit --deny warnings
       - name: Install cargo-deny
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
-          tool: cargo-deny@0.20.2
+          tool: cargo-deny@0.22.1
       - name: Fetch cargo-deny advisory database
         run: cargo deny fetch db
       - name: Check dependency and license policy
@@ -67,10 +67,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust 1.93.1
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: 1.93.1
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Check MSRV
         run: cargo check --locked --workspace --all-features

@@ -1,6 +1,6 @@
 [package]
 name = "treetop-bundle"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.93.1"
 license = "MIT"
@@ -32,22 +32,22 @@ encrypted-keys = ["dep:pkcs8"]
 
 [dependencies]
 base64 = "0.23.1"
-cedar-policy = "=4.13.0"
+cedar-policy = "=4.15.0"
 ed25519-dalek = { version = "3.0.0", features = ["pem", "pkcs8"] }
-flate2 = "1.1.10"
+flate2 = "1.1.11"
 pkcs8 = { version = "0.11.0", features = ["encryption"], optional = true }
-regex = "1.13.1"
+regex = "1.13.2"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-sha2 = "0.11.0"
+serde_json = "1.0.154"
+sha2 = "0.11.2"
 tar = "0.4.46"
-thiserror = "2.0.20"
-toml = "1.1.6"
-treetop-core = "=0.3.0"
-zeroize = "1.9.0"
+thiserror = "2.0.21"
+toml = "1.2.3"
+treetop-core = "=0.4.0"
+zeroize = "1.9.2"
 
 [dev-dependencies]
-gungraun = "0.19.4"
+gungraun = "0.20.0"
 tempfile = "3.27.0"
 
 [[bench]]

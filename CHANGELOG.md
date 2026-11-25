@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
+### Breaking changes
+
+- Use Core 0.4.0 and Cedar 4.15.0. Rebuild and re-sign policy archives with
+  Bundle CLI 0.4.0 before deploying REST 0.3.0. Existing format 2 source
+  manifests and declared label targets remain valid.
+
+### Security
+
+- Update `ctutils` to 0.4.8 and `rustix` to 1.1.6 in the workspace and fuzz lockfiles.
+
 ## [0.3.0] - 2026-10-03
 
 ### Breaking changes

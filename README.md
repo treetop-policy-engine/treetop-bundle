@@ -75,7 +75,7 @@ Other types' attributes remain application-owned. Constrain policy resource type
 before trusting derived labels. Wildcards, old `kind`/`output` fields, and unknown
 fields are rejected. There is one runtime labeler per rule, with no grouping adapter.
 
-This is a breaking 0.3.0 release using Core 0.3.0, Cedar 4.13.0, and format version 2 for bundle/module manifests,
+Bundle 0.4.0 uses Core 0.4.0, Cedar 4.15.0, and format version 2 for bundle/module manifests,
 archives, and signatures. Replace label rule syntax, set `format_version = 2`,
 and rebuild and re-sign every archive. Version 1 is rejected rather than migrated
 implicitly. See [the migration](MIGRATION.md).
@@ -166,7 +166,7 @@ dominated by the work factor encoded in each key.
 Run any probe locally with the matching runner:
 
 ```sh
-cargo install gungraun-runner --version 0.19.4 --locked
+cargo install gungraun-runner --version 0.20.0 --locked
 cargo bench --bench labels_parse_callgrind
 cargo bench --bench labels_parse_many_callgrind
 cargo bench --bench labels_to_labelers_callgrind
